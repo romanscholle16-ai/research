@@ -1,6 +1,6 @@
 """Persistent research memory (SQLite, WAL). All writes are short transactions => crash safe."""
 from __future__ import annotations
-import json, sqlite3, threading, time
+import json, os, sqlite3, threading, time
 from pathlib import Path
 from .config import home_dir
 
@@ -54,9 +54,11 @@ CREATE TABLE IF NOT EXISTS lessons(
 class DB:
     def __init__(self, path: Path | str | None = None):
         self.path = str(path or (home_dir() / "research.db"))
-        self._local = threading.local()
+        self._local = threading.local(); self.worker_id = int(os.environ.get("STRATEGYLAB_WORKER", "0"))
         with self.conn() as c:
             c.executescript(SCHEMA)
+            try: c.execute("ALTER TABLE jobs ADD COLUMN worker INTEGER")
+            except sqlite3.OperationalError: pass
 
     def conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "c", None)
@@ -91,6 +93,10 @@ class DB:
                      (kind, json.dumps(payload or {}), priority, not_before, time.time()))
         return cur.lastrowid
 
+    def wkey(self, base, i=None):
+        i = self.worker_id if i is None else i
+        return base if i == 0 else f"{base}:{i}"
+
     def claim_job(self, kinds=None, exclude=()):
         """Atomically claim the highest-priority runnable job."""
         c = self.conn()
@@ -98,10 +104,11 @@ class DB:
         try:
             now = time.time()
             ex = "".join(f" AND kind!='{k}'" for k in exclude if k.isalpha())
+            if kinds: ex += " AND kind IN (" + ",".join(f"'{k}'" for k in kinds if k.isalpha()) + ")"
             r = c.execute(f"SELECT * FROM jobs WHERE status='queued' AND not_before<=?{ex} ORDER BY priority, id LIMIT 1", (now,)).fetchone()
             if not r:
                 c.execute("COMMIT"); return None
-            c.execute("UPDATE jobs SET status='running', started=?, heartbeat=?, attempts=attempts+1 WHERE id=?", (now, now, r["id"]))
+            c.execute("UPDATE jobs SET status='running', started=?, heartbeat=?, attempts=attempts+1, worker=? WHERE id=?", (now, now, self.worker_id, r["id"]))
             c.execute("COMMIT")
             d = dict(r); d["attempts"] += 1; d["payload"] = json.loads(d["payload"] or "{}")
             return d
@@ -110,7 +117,7 @@ class DB:
 
     def heartbeat(self, job_id=None):
         now = time.time()
-        self.set("worker_heartbeat", now)
+        self.set(self.wkey("worker_heartbeat"), now)
         if job_id:
             self.x("UPDATE jobs SET heartbeat=? WHERE id=?", (now, job_id))
 
@@ -134,8 +141,8 @@ class DB:
             self.fail_job(r["id"], "stalled/crashed worker (heartbeat timeout)")
         return len(rows)
 
-    def reclaim_all_running(self):
-        rows = self.q("SELECT id FROM jobs WHERE status='running'")
+    def reclaim_all_running(self, worker=None):
+        rows = self.q("SELECT id FROM jobs WHERE status='running'" + ("" if worker is None else f" AND COALESCE(worker,0)={int(worker)}"))
         for r in rows:
             self.fail_job(r["id"], "interrupted by restart", base_backoff=0.1)
         return len(rows)

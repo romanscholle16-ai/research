@@ -51,25 +51,30 @@ def main():
     sup = Supervisor(db, st, router, store)
     director = Director(db, st, store, em)
     from . import audit as _audit
-    try: _audit.backfill_registry(db)
+    try:
+        if db.worker_id == 0: _audit.backfill_registry(db)
     except Exception as e: db.log('warn', 'worker', f'registry backfill failed: {e}')
     db.log("info", "worker", f"worker started pid={os.getpid()}")
-    db.set("worker_pid", os.getpid())
+    wid = db.worker_id; primary = wid == 0
+    db.set(db.wkey("worker_pid"), os.getpid())
+    my_kinds = None if primary else ("experiment", "recheck", "plan")
     stop = False
     while not stop:
         db.heartbeat()
         ctl = db.get("control", "stopped")
         if ctl == "stopped": break
+        if not primary and wid >= int(Settings.load().n_workers): break      # scaled down
         if ctl == "paused": time.sleep(1); continue
         if resources.rss_mb() > st.max_rss_mb:
             db.log("warn", "resources", f"RSS {resources.rss_mb():.0f}MB over limit; restarting worker"); sys.exit(EXIT_RSS)
         if resources.free_mem_mb() < 800:
             db.set("blocker", "low_system_memory"); time.sleep(10); continue
         try:
-            pending = db.q("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]["n"]
-            if pending == 0: db.enqueue("plan", {"n": 24}, priority=1)       # exploration never starves behind maintenance jobs
-            loop_n = db.get("loop_n", 0) + 1; db.set("loop_n", loop_n)
-            job = db.claim_job(exclude=("recheck",) if loop_n % 3 else ())  # rechecks get 1/3 of the slots
+            nw = max(1, int(Settings.load().n_workers))
+            qd = db.q("SELECT SUM(kind='experiment' AND status='queued') e, SUM(kind='plan') p FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]
+            if (qd["e"] or 0) < 30 * nw and (qd["p"] or 0) < nw: db.enqueue("plan", {"n": 24}, priority=1)   # keep every worker fed; planning runs on any worker
+            loop_n = db.get(db.wkey("loop_n"), 0) + 1; db.set(db.wkey("loop_n"), loop_n)
+            job = db.claim_job(kinds=my_kinds, exclude=("recheck",) if loop_n % 3 else ())  # rechecks get 1/3 of the slots
             if job is None:
                 time.sleep(st.idle_sleep_s); continue
             sp_ = job["payload"].get("spec") or {}
@@ -77,14 +82,14 @@ def main():
                    "symbol": job["payload"].get("symbol"), "timeframe": job["payload"].get("timeframe"), "stage": "starting",
                    "family": sp_.get("family"), "params": sp_.get("params"), "side": sp_.get("side"), "stop_atr": sp_.get("stop_atr"),
                    "target_rr": sp_.get("target_rr"), "max_hold": sp_.get("max_hold"), "filters": sp_.get("filters")}
-            db.heartbeat(job["id"]); db.set("current_job", cj_)
+            db.heartbeat(job["id"]); db.set(db.wkey("current_job"), cj_)
             def stage_cb(name, cj_=cj_):
-                cj_["stage"] = name; cj_["stage_since"] = time.time(); db.set("current_job", cj_)
+                cj_["stage"] = name; cj_["stage_since"] = time.time(); db.set(db.wkey("current_job"), cj_)
             try:
                 maybe_inject(db, job["kind"])
                 if job["kind"] == "plan":
                     ai_ok = db.get("ai_enabled", True)
-                    sup.maybe_queue_portfolio(); sup.maybe_queue_forward()
+                    if primary: sup.maybe_queue_portfolio(); sup.maybe_queue_forward()
                     plans = director.plan_batch(job["payload"].get("n", 24)) if (st.use_director and not os.environ.get("STRATEGYLAB_AI_MOCK")) else sup.plan(job["payload"].get("n", 8), use_ai=ai_ok)
                     for p in plans: db.enqueue("experiment", p, priority=5)
                     db.finish_job(job["id"], {"planned": len(plans)})
@@ -108,7 +113,7 @@ def main():
                 elif job["kind"] == "experiment":
                     res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]), em=em, stage_cb=stage_cb)
                     db.finish_job(job["id"], res)
-                    db.set("cycles", db.get("cycles", 0) + 1)
+                    db.x("INSERT INTO kv(k,v) VALUES('cycles','1') ON CONFLICT(k) DO UPDATE SET v=CAST(v AS INTEGER)+1")
                     db.set("last_experiment", {**res, "symbol": job["payload"]["symbol"], "timeframe": job["payload"]["timeframe"],
                                                "family": job["payload"]["spec"]["family"], "ts": time.time()})
                 else:
@@ -120,7 +125,7 @@ def main():
                 db.log("error", "worker", f"job {job['id']} failed: {e}\n{traceback.format_exc()[-600:]}")
                 db.fail_job(job["id"], repr(e), max_attempts=st.max_job_attempts)
             finally:
-                db.set("current_job", None); db.heartbeat()
+                db.set(db.wkey("current_job"), None); db.heartbeat()
         except Exception as e:  # DB busy etc. - never die on a transient error
             db.log("error", "worker", f"loop error: {e}")
             try:   # never leave a claimed job stuck in 'running'

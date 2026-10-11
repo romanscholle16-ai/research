@@ -20,6 +20,7 @@ for r in rows:
     m = sm.get("final", {}).get("test") or sm.get("validate", {}).get("val") or sm.get("screen") or {}
     feed.append(dict(id=r["sid"], family=r["family"], sym=r["symbol"].replace("USDT", ""), tf=r["tf"], status=r["status"], stage=stage,
                      trades=m.get("n", 0), R=round(m.get("mean_R", 0), 3), why=[x for x in sm.get("reasons", [])][:3], age=round(now - r["updated"], 1)))
+_nw = int(d.get("n_workers", 1) or 1); _others = [x for x in (d.get(d.wkey("current_job", i)) for i in range(1, _nw)) if x]
 cj = d.get("current_job"); nxt = d.q("SELECT payload FROM jobs WHERE status='queued' AND kind='experiment' ORDER BY priority,id LIMIT 12")
 q = lambda p: (lambda x: dict(family=x["spec"]["family"], sym=x["symbol"].replace("USDT", ""), tf=x["timeframe"], note=x.get("note", "")[:60], params=x["spec"].get("params"), side=x["spec"].get("side")))(json.loads(p))
 counts = d.counts(0)
@@ -33,7 +34,8 @@ tick = dict(mode=_r.mode(), paid_enabled=_r.paid_allowed(), seq=seq, ts=now, con
                          stop_atr=cj.get("stop_atr"), target_rr=cj.get("target_rr"), max_hold=cj.get("max_hold"), filters=cj.get("filters")) if cj else None),
             next=[q(x["payload"]) for x in nxt], feed=feed, completed_since_last=n_since, since_secs=round(now - st["last_ts"], 1) if st["last_ts"] else None,
             totals=dict(experiments=counts.get("experiments", 0), promising=counts.get("PROMISING", 0), rejected=counts.get("REJECTED", 0), qualified=counts.get("BACKTEST_QUALIFIED", 0)),
-            queue_depth=d.q("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND kind='experiment'")[0]["n"], worker_count=1,
+            queue_depth=d.q("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND kind='experiment'")[0]["n"], worker_count=_nw,
+            others=[dict(kind=o['kind'], sym=(o.get('symbol') or '').replace('USDT',''), tf=o.get('timeframe'), family=o.get('family'), stage=o.get('stage'), elapsed=round(now - o['since'], 1)) for o in _others],
             last_min=d.q("SELECT COUNT(*) n FROM experiments WHERE synthetic=0 AND finished>?", (now - 60,))[0]["n"],
             errors_1h=d.q("SELECT COUNT(*) n FROM events WHERE level='error' AND ts>?", (now - 3600,))[0]["n"],
             director=dict(mode=(d.get("director_last") or {}).get("mode"), reason=((d.get("director_last") or {}).get("reason") or "")[:400],

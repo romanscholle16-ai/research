@@ -54,7 +54,7 @@ def test_100_cycle_autonomy_with_failures_and_restart(home):
     assert total >= 160
     ev = " | ".join(r["message"] for r in db.q("SELECT message FROM events"))
     assert "injecting crash" in ev and "injecting hang" in ev and "injecting error" in ev
-    assert "worker exited rc=1" in ev                                   # crash was detected and handled
+    assert "exited rc=1" in ev                                   # crash was detected and handled
     assert "stalled" in ev or "timeout" in ev                           # hang was killed by watchdog
     assert "job" in ev and "failed: injected failure" in ev             # job exception recorded, retried
     assert "recovered" in ev                                            # post-restart recovery of interrupted jobs

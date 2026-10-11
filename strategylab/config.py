@@ -37,6 +37,7 @@ class Settings:
     multiple_testing_alpha: float = 0.05
     # resources
     max_rss_mb: int = 6000
+    n_workers: int = 1                  # parallel worker processes (worker 0 = primary: planning/portfolio/sync; others run experiments+rechecks)
     job_timeout_s: int = 600
     watchdog_stall_s: int = 900
     progress_stall_s: int = 900         # no job completed for this long while jobs are queued => restart worker

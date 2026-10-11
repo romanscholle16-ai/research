@@ -12,7 +12,7 @@ from .features import Features
 
 class DataStore:
     """LRU cache of (df, meta, Features, bounds). `loader(symbol, tf)` -> (df, meta). Pluggable for tests (synthetic)."""
-    def __init__(self, st, loader=None, max_items=4):
+    def __init__(self, st, loader=None, max_items=8):
         self.st, self.loader, self.max = st, loader or D.load_real, max_items
         self.c = OrderedDict()
 

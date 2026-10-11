@@ -78,7 +78,7 @@ h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mu
       <div class="panel"><h2>Queued next <span class="foot" id="qmeta"></span></h2><div id="next"></div></div>
     </div>
   </div>
-  <p class="foot" id="foot">The research service runs one test at a time. This page receives a new snapshot about once a minute (the browser cannot reach the research machine directly), so the running test and queue are as of the last update; hundreds of quick tests can finish between updates, so the finished list is a sample of the newest 40. Stages: A eligibility (can it trade often enough to matter), B fast backtest with costs, C robustness, D locked-test qualification.</p>
+  <p class="foot" id="foot">The research service runs several tests in parallel (one per worker). This page receives a new snapshot about once a minute (the browser cannot reach the research machine directly), so the running test and queue are as of the last update; hundreds of quick tests can finish between updates, so the finished list is a sample of the newest 40. Stages: A eligibility (can it trade often enough to matter), B fast backtest with costs, C robustness, D locked-test qualification.</p>
 </div>
 
 <script>
@@ -110,7 +110,8 @@ function render() {
   const nx = t.next || [];
   $('next').innerHTML = nx.map((n,i) => `<div class="qrow"><span>${i+1}</span><span><b>${esc(n.family.replaceAll('_',' '))}</b> <span class="mono">${esc(n.sym)} ${esc(n.tf)}</span> <span class="foot">${esc(n.params?Object.entries(n.params).map(([k,v])=>k+'='+(Array.isArray(v)?v.join('|'):v)).join(' '):'')}</span></span></div>`).join('') || '<span class="foot">Nothing queued at the last update.</span>';
   $('qmeta').textContent = '· ' + fmt(t.queue_depth ?? nx.length) + ' waiting, next ' + nx.length + ' shown';
-  $('summary').innerHTML = `<span><b>${t.worker_count ?? 1}</b> worker</span><span><b>${r?1:0}</b> test running</span><span><b>${fmt(t.queue_depth ?? nx.length)}</b> queued</span><span><b>${fmt(t.last_min ?? 0)}</b> finished in the last minute</span><span><b>${fmt(t.completed_since_last)}</b> since the previous update</span>`;
+  if ((t.others||[]).length) $('now').innerHTML += '<div class="foot mono" style="margin-top:8px">'+t.others.map(o=>'worker: '+esc((o.family||o.kind||'').replaceAll('_',' '))+' '+esc(o.sym||'')+' '+esc(o.tf||'')+' · '+esc(o.stage||'')+' '+Math.round(o.elapsed)+'s').join('<br>')+'</div>';
+  $('summary').innerHTML = `<span><b>${t.worker_count ?? 1}</b> worker</span><span><b>${(r?1:0)+(t.others||[]).length}</b> tests running</span><span><b>${fmt(t.queue_depth ?? nx.length)}</b> queued</span><span><b>${fmt(t.last_min ?? 0)}</b> finished in the last minute</span><span><b>${fmt(t.completed_since_last)}</b> since the previous update</span>`;
 
   // feed
   const firstLoad = shown.size === 0;
