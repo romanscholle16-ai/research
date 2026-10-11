@@ -102,6 +102,10 @@ def main():
                     from . import refine as RF
                     res = RF.run_batch(db, st, store, em, max_seeds=6, budget_s=240); db.finish_job(job["id"], res)
                     db.log("info", "refine", f"refinery pass: {res}")
+                    if time.time() - (db.get("data_audit_last") or 0) > 6 * 3600:        # data-integrity agent: audit + quarantine (primary worker, between refinery passes)
+                        from . import dataaudit as DA
+                        q = DA.run_audit(db, D.load_real, st.symbols, st.timeframes, log=lambda m: None); store.c.clear()
+                        db.log("warn" if q else "info", "data", f"data audit: {len(q)} quarantined cell(s) {list(q)[:6]}")
                 elif job["kind"] == "data_sync":
                     n = sum(D.sync_daily(sym, st.research_end) for sym in st.symbols); db.set("data_sync_ts", time.time())
                     store.c.clear()           # reload frames so forward bars become visible

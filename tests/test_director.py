@@ -249,3 +249,31 @@ def test_limit_execution_model_fills_and_fees():
     tr = BT.backtest(f, spec, L, S, em, 0, 12)
     if len(tr):                       # entered on the dip at the limit price, not at a market open
         assert abs(tr.entry[0] - 100.0) < 1e-9 and tr.fee[0] <= 2 * em.taker_fee + 1e-12
+
+
+def test_forensics_counterfactuals_are_reproducible_and_causal(tmp_path):
+    import numpy as np
+    from strategylab import forensics as FO
+    cf = dict(base=dict(n=200, R=-0.05, gross=0.1), no_cost=dict(n=200, R=0.12, gross=0.12), **{"cost_x0.5": dict(n=200, R=0.03, gross=0.1)})
+    causes, hints = FO.classify(cf, dict(stop_atr=1.0), weeks=100)
+    assert causes[0][0] == "fees_slippage" and "wider_stop" in hints
+    cf2 = dict(base=dict(n=200, R=-0.04, gross=0.0), no_cost=dict(n=200, R=0.0, gross=0.0), **{"cost_x0.5": dict(n=200, R=-0.02, gross=0.0)})
+    assert FO.classify(cf2, dict(stop_atr=1.0), weeks=100)[0][0][0] == "no_predictive_edge"
+    cf3 = dict(base=dict(n=200, R=0.0, gross=0.1), no_cost=dict(n=200, R=0.1, gross=0.1), **{"cost_x0.5": dict(n=200, R=0.05, gross=0.1)}, side_long=dict(n=100, R=0.12), side_short=dict(n=100, R=-0.1))
+    c3 = [c[0] for c in FO.classify(cf3, dict(stop_atr=1.0), weeks=100)[0]]
+    assert "long_short_asymmetry" in c3
+    assert FO.classify(cf3, dict(stop_atr=1.0), weeks=100) == FO.classify(cf3, dict(stop_atr=1.0), weeks=100)       # deterministic
+
+
+def test_data_audit_detects_corruption():
+    import numpy as np, pandas as pd
+    from strategylab import dataaudit as DA
+    n = 3000; idx = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC"); rng = np.random.default_rng(1)
+    c = 100 * np.exp(np.cumsum(rng.normal(0, 0.001, n))); o = np.r_[c[0], c[:-1]]
+    df = pd.DataFrame(dict(open=o, high=np.maximum(o, c) * 1.001, low=np.minimum(o, c) * 0.999, close=c, volume=rng.uniform(1, 2, n), funding=0.0), index=idx)
+    assert DA.audit_frame(df, "15m")["status"] == "ok"
+    dup = pd.concat([df, df.iloc[:5]]).sort_index(); assert DA.audit_frame(dup, "15m")["status"] == "quarantined"
+    gap = df.drop(df.index[500:2000]); r = DA.audit_frame(gap, "15m"); assert r["status"] == "quarantined" and any("missing" in h or "gap" in h for h in r["hard"])
+    bad = df.copy(); bad.iloc[100, bad.columns.get_loc("high")] = bad.iloc[100]["low"] * 0.5
+    bad.iloc[200:260, bad.columns.get_loc("high")] = 1e-3          # many inconsistent bars
+    assert DA.audit_frame(bad, "15m")["status"] == "quarantined"

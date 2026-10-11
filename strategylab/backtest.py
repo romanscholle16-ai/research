@@ -63,6 +63,7 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
     imp_stop = (em.half_spread + em.stop_slippage) * em.cost_mult
     fee = em.taker_fee * em.cost_mult; mfee = em.maker_fee * em.cost_mult
     hl = bool(em.min_lev_capable); lim_n = int(em.limit_bars); pen = em.fill_pen; lim_exits = bool(em.limit_exits)
+    big = np.flatnonzero(np.diff(ts) > 12 * 3600) + 1      # first bar after a data outage (>12h): no position is held across it
     idx = np.flatnonzero((L | S))
     idx = idx[(idx >= lo) & (idx < hi - 2)]
     rows = []
@@ -89,6 +90,9 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
         if stop_frac < 0.001: continue
         tgt = entry + d * rr * sd if rr > 0 else None
         last = min(i + maxh, hi - 1)
+        if len(big):
+            g = big[np.searchsorted(big, e + 1)] if np.searchsorted(big, e + 1) < len(big) else None
+            if g is not None and g <= last: last = g - 1
         if e > last: continue
         mae = 0.0; exit_px = None; reason = 2; j_exit = last
         for j in range(e, last + 1):

@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS director_batches(id INTEGER PRIMARY KEY, ts REAL, mod
 CREATE TABLE IF NOT EXISTS research_metrics(id INTEGER PRIMARY KEY, ts REAL, body TEXT);
 CREATE TABLE IF NOT EXISTS refine_runs(
   id INTEGER PRIMARY KEY, ts REAL, seed TEXT, symbol TEXT, timeframe TEXT, autopsy_json TEXT, lineage_json TEXT, final_json TEXT);
+CREATE TABLE IF NOT EXISTS failure_diagnoses(
+  id INTEGER PRIMARY KEY, ts REAL, strategy_id TEXT, symbol TEXT, timeframe TEXT, primary_cause TEXT, causes_json TEXT, hints_json TEXT, cf_json TEXT);
+CREATE TABLE IF NOT EXISTS data_audit(
+  id INTEGER PRIMARY KEY, ts REAL, symbol TEXT, timeframe TEXT, status TEXT, rows INTEGER, report_json TEXT);
 CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS lessons(
   id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reasons TEXT, strategy_id TEXT);

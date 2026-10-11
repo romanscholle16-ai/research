@@ -94,7 +94,7 @@ def autopsy(F, spec, em, hi):
                 verdict=("broad" if e["pos_all"] >= 0.75 else "concentrated" if e["pos_all"] >= 0.5 else "fragile"))
 
 
-def refine_seed(db, st, store, em, seed, symbol, tf, rounds=5, rng=None, budget_s=90):
+def refine_seed(db, st, store, em, seed, symbol, tf, rounds=5, rng=None, budget_s=90, hints=()):
     """Greedy ratcheted trial-and-error from one seed. Returns (best_spec, lineage list). Never reads the locked test."""
     rng = rng or np.random.default_rng(int(time.time()) % 2**31)
     it = store.get(symbol, tf); F = it["F"]; hi = it["bounds"]["val"][1]; t0 = time.time()
@@ -102,7 +102,9 @@ def refine_seed(db, st, store, em, seed, symbol, tf, rounds=5, rng=None, budget_
     cur = copy.deepcopy(seed); pe = evaluate(profile(F, cur, em, hi, cache), F, hi); lineage = []; seen = {ST.spec_hash(cur)}
     for r in range(rounds):
         improved = False
-        for kind, child in edits(cur, rng):
+        cand = edits(cur, rng)
+        if hints: cand.sort(key=lambda kc: 0 if any(kc[0].startswith(h.split(':')[0]) or h.startswith(kc[0].split(':')[0]) for h in hints) else 1)      # forensics-supported edit kinds first
+        for kind, child in cand:
             if time.time() - t0 > budget_s: break
             h = ST.spec_hash(child)
             if h in seen: continue
@@ -143,7 +145,12 @@ def run_batch(db, st, store, em, max_seeds=6, budget_s=240):
         try:
             F = store.get(sy, tf)["F"]; hi = store.get(sy, tf)["bounds"]["val"][1]
             a = autopsy(F, spec, em, hi)
-            best, pe, lin = refine_seed(db, st, store, em, spec, sy, tf, rng=rng, budget_s=max(20, budget_s / max_seeds))
+            from . import forensics as FO
+            dg = FO.diagnose(db, store, em, key.split("|")[0], spec, sy, tf); a["diagnosis"] = dg["causes"]
+            if dg["causes"][0][0] == "no_predictive_edge":        # repair budget: no testable reason to believe an edit helps -> archive instead of tweaking noise
+                done.append(key); db.x("INSERT INTO refine_runs(ts,seed,symbol,timeframe,autopsy_json,lineage_json,final_json) VALUES(?,?,?,?,?,?,?)",
+                                       (time.time(), key, sy, tf, json.dumps(a), "[]", json.dumps(dict(archived="no_predictive_edge")))); continue
+            best, pe, lin = refine_seed(db, st, store, em, spec, sy, tf, rng=rng, budget_s=max(20, budget_s / max_seeds), hints=dg["hints"])
         except Exception as e:
             db.log("warn", "refine", f"seed {key}: {e}"); done.append(key); continue
         done.append(key); tried += len(lin)

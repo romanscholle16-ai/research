@@ -200,9 +200,11 @@ class Director:
         under = sorted([kv for kv in arms.items() if "|".join(kv[0]) not in cool and kv[1]["n"] < 40], key=lambda kv: (kv[1]["n"], rng.random()))
         top = ranked[:max(4, len(ranked) // 8)]
 
+        quar = set((self.db.get("quarantine") or {}).keys())
         def _attempt(kind, arm):
             nonlocal tried
             tried += 1; fam, sy, tf = arm[0]
+            if f"{sy}|{tf}" in quar: return False          # data-integrity agent quarantined this dataset
             regime = self.regime_hint(fam, sy, tf) if kind != "explore" else False
             cand = self._gp_candidate(rng, sy, tf, kind == "evolve") if fam == "gp_rule" else self._classic_candidate(rng, fam, sy, tf, kind == "evolve", regime)
             if not cand: return False
