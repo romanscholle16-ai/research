@@ -77,7 +77,7 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
 
     def finish(status, reasons):
         summary["reasons"] = reasons; summary["failure_class"] = FE.classify(reasons) if status == "REJECTED" else None
-        stage_ = 4 if "final" in summary else 3 if "validate" in summary else 2 if "screen" in summary else (1 if (status == "REJECTED" and summary.get("failure_class") == "no_edge") else 0)
+        stage_ = 3 if "final" in summary else 2 if "validate" in summary else 1 if "screen" in summary else 0   # 0 eligibility-fail, 1 screen-fail, 2 validate-fail, 3 validate-pass
         FE.register(db, spec, symbol, tf, stage_, status == "REJECTED")
         if fp_key:                                              # remember how often entries with this signal fingerprint failed
             db.x("INSERT INTO signal_fp(symbol,timeframe,fp,family,n_tested,n_failed) VALUES(?,?,?,?,1,?) ON CONFLICT(symbol,timeframe,fp) DO UPDATE SET n_tested=n_tested+1, n_failed=n_failed+?",

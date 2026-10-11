@@ -34,11 +34,13 @@ def _weekly_series(tr, t0, t1):
 
 
 def load_pool(db, t_val_end, min_trades=30):
-    rows = db.q("""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, t.trades_json tj, s.family fam
+    rows = db.q("""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.summary_json sj, t.trades_json tj, s.family fam
                    FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id JOIN trades t ON t.strategy_id=ss.strategy_id AND t.symbol=ss.symbol AND t.timeframe=ss.timeframe AND t.stage='all'
                    WHERE ss.synthetic=0""")
     pool = []
     for r in rows:
+        sm = json.loads(r["sj"]); el = sm.get("eligibility"); lc = sm.get("legacy_check")
+        if not ((el and el.get("decision") == "pass") or (lc and lc.get("viable"))): continue      # only components that clear TODAY's frequency + economics screen
         tr = Trades.from_json(json.loads(r["tj"])); tv = tr.slice_time(0, t_val_end)
         if len(tv) < min_trades: continue
         m = metrics(tv)
@@ -104,6 +106,9 @@ def run_portfolio(db, st, store, em=DEFAULT, hb=lambda: None):
         if c["ruin"]["p"] > st.max_ruin_prob: reasons.append("excess_ruin_risk_" + name)
         if c["lose_50pct"]["p"] > st.max_lose50_prob: reasons.append("excess_drawdown_" + name)
     rb, rr = V.robustness(alltr); out["robustness"] = rb; reasons += rr
+    comp_R = [float(c["tr"].R.sum()) for c in chosen]; tot_R = sum(comp_R)                      # concentration: one component must not carry the book
+    out["component_R_share"] = [round(x / tot_R, 3) for x in comp_R] if tot_R > 0 else None
+    if tot_R <= 0 or max(comp_R) / tot_R > 0.6: reasons.append("concentrated_profit")
     n_tested = db.q("SELECT COUNT(*) n FROM strategies")[0]["n"]
     am = metrics(alltr); z = am["t"]; p = 2 * V.norm_sf(abs(z)) if z > 0 else 1.0
     out["multiple_testing"] = dict(t=z, p=p, n_tested=n_tested, adj_p=1 - (1 - p) ** max(n_tested, 1))

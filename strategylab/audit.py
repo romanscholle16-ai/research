@@ -27,13 +27,13 @@ def _grid_neighbors(spec, others_by_group):
     return False
 
 
-def run_audit(db, st: Settings | None = None, write_legacy=True):
+def run_audit(db, st: Settings | None = None, write_legacy=True, synthetic=0):
     st = st or Settings.load(); em = get_model(st.exchange_preset); now = time.time(); out = {"generated": now}
-    rows = db.q("""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.status stt, ss.summary_json sj, s.family fam, s.spec_json sp
-                   FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id WHERE ss.synthetic=0 AND ss.symbol!='MULTI'""")
+    rows = db.q(f"""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.status stt, ss.summary_json sj, s.family fam, s.spec_json sp
+                   FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id WHERE ss.synthetic={int(synthetic)} AND ss.symbol!='MULTI'""")
     comp = {(r["strategy_id"], r["symbol"], r["timeframe"]): (r["t1"] - r["t0"]) for r in db.q(
-        "SELECT strategy_id, symbol, timeframe, MIN(started) t0, MAX(finished) t1 FROM experiments WHERE synthetic=0 AND stage IN ('eligibility','screen','validate','final') GROUP BY 1,2,3")}
-    has_elig = {(r["strategy_id"], r["symbol"], r["timeframe"]) for r in db.q("SELECT DISTINCT strategy_id, symbol, timeframe FROM experiments WHERE stage='eligibility' AND synthetic=0")}
+        f"SELECT strategy_id, symbol, timeframe, MIN(started) t0, MAX(finished) t1 FROM experiments WHERE synthetic={int(synthetic)} AND stage IN ('eligibility','screen','validate','final') GROUP BY 1,2,3")}
+    has_elig = {(r["strategy_id"], r["symbol"], r["timeframe"]) for r in db.q(f"SELECT DISTINCT strategy_id, symbol, timeframe FROM experiments WHERE stage='eligibility' AND synthetic={int(synthetic)}")}
     # ---- distinctness
     hyp = collections.defaultdict(list); sig_defs = set(); groups = collections.defaultdict(list)
     for r in rows:
@@ -76,17 +76,17 @@ def run_audit(db, st: Settings | None = None, write_legacy=True):
             if r["stt"] == "REJECTED" and FE.classify(sm.get("reasons", [])) in ("frequency", "costs", "economic_infeasibility", "duplicate"): w += c
         return round(w), round(tot_)
     wp, tp = waste(pre); wq, tq = waste(post)
-    elig_before_screen = db.q("""SELECT COUNT(*) n FROM experiments e JOIN experiments s ON s.strategy_id=e.strategy_id AND s.symbol=e.symbol AND s.timeframe=e.timeframe
-                                 WHERE e.stage='eligibility' AND e.status='fail' AND s.stage IN ('screen','validate','final') AND e.synthetic=0""")[0]["n"]
+    elig_before_screen = db.q(f"""SELECT COUNT(*) n FROM experiments e JOIN experiments s ON s.strategy_id=e.strategy_id AND s.symbol=e.symbol AND s.timeframe=e.timeframe
+                                 WHERE e.stage='eligibility' AND e.status='fail' AND s.stage IN ('screen','validate','final') AND e.synthetic={int(synthetic)}""")[0]["n"]
     out["early_filter"] = dict(rows_with_eligibility=len(post), rows_legacy_without=len(pre), rejected_at_eligibility=sum(1 for r in post if "screen" not in json.loads(r["sj"])),
                                rows_that_ran_backtest_after_failing_eligibility=elig_before_screen,
                                legacy_compute_wasted_on_infeasible_secs=wp, legacy_compute_total_secs=tp, legacy_waste_share=round(wp / max(tp, 1), 3),
                                current_compute_wasted_on_infeasible_secs=wq, current_compute_total_secs=tq, current_waste_share=round(wq / max(tq, 1), 3),
                                avg_secs_per_test_legacy=round(tp / max(len(pre), 1), 3), avg_secs_per_test_current=round(tq / max(len(post), 1), 3))
     # ---- legacy survivors vs current rules
-    tr_rows = db.q("""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.summary_json sj, t.trades_json tj, s.spec_json sp FROM strategy_status ss
+    tr_rows = db.q(f"""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.summary_json sj, t.trades_json tj, s.spec_json sp FROM strategy_status ss
                       JOIN strategies s ON s.id=ss.strategy_id JOIN trades t ON t.strategy_id=ss.strategy_id AND t.symbol=ss.symbol AND t.timeframe=ss.timeframe AND t.stage='all'
-                      WHERE ss.synthetic=0 AND ss.status='PROMISING' AND ss.symbol!='MULTI'""")
+                      WHERE ss.synthetic={int(synthetic)} AND ss.status='PROMISING' AND ss.symbol!='MULTI'""")
     c_rt = FE.round_trip_cost(em); r_req = FE.required_monthly_return(st.withdraw_target, st.retain_frac, st.horizon_months, st.start_equity)
     verd = collections.Counter(); viable = []; per_tf = collections.Counter()
     for r in tr_rows:
@@ -136,3 +136,27 @@ def render_markdown(o):
            f"- checked {L['checked']:,} PROMISING candidates (from stored trades); **{L['viable_under_current_stageA']}** pass the current frequency + economic screen. Failures: {L['failure_counts']}",
            f"- by timeframe: {L['by_timeframe']}", f"- target arithmetic: +{o['required_monthly_return']:.0%}/month sustained; round-trip cost {o['round_trip_cost']:.4%} of notional (conservative BTCC assumption, unverified)"]
     return "\n".join(md) + "\n"
+
+
+def backfill_registry(db):
+    """One-time (idempotent) construction of the hypothesis registry from the preserved experiment history.
+    stage: 0 eligibility-fail, 1 screen-fail, 2 validate-fail, 3 validate-pass (locked-test outcomes are never used as stage)."""
+    import hashlib
+    if db.get("registry_backfilled"): return 0
+    rows = db.q("""SELECT ss.strategy_id sid, ss.symbol sy, ss.timeframe tf, ss.status stt, ss.summary_json sj, s.spec_json sp
+                   FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id WHERE ss.synthetic=0 AND ss.symbol!='MULTI'""")
+    agg = {}
+    for r in rows:
+        spec = json.loads(r["sp"])
+        if spec.get("family") not in ST.FAMILIES: continue
+        ek, hk, gk = FE.hyp_keys(spec, r["sy"], r["tf"]); sm = json.loads(r["sj"])
+        stage = 3 if "final" in sm else 2 if "validate" in sm else 1 if "screen" in sm else 0
+        a = agg.setdefault(hk, dict(ek=ek, gk=gk, fam=spec["family"], sy=r["sy"], tf=r["tf"], side=spec.get("side"), params=json.dumps(spec["params"], sort_keys=True, default=list), n=0, f=0, st=0))
+        a["n"] += 1; a["f"] += r["stt"] == "REJECTED"; a["st"] = max(a["st"], stage)
+    now = time.time()
+    db.conn().execute("BEGIN")
+    for hk, a in agg.items():
+        db.conn().execute("""INSERT OR REPLACE INTO hyp_registry(hkey,entry_key,group_key,family,symbol,timeframe,side,params_json,n_variants,n_failed,best_stage,first_ts,last_ts)
+                             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (hk, a["ek"], a["gk"], a["fam"], a["sy"], a["tf"], a["side"], a["params"], a["n"], a["f"], a["st"], now, now))
+    db.conn().execute("COMMIT"); db.set("registry_backfilled", True)
+    return len(agg)

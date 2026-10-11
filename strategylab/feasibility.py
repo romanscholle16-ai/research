@@ -163,7 +163,7 @@ def novelty_check(db, spec, symbol, tf):
     r = db.q("SELECT n_variants FROM hyp_registry WHERE hkey=?", (hk,))
     if r and r[0]["n_variants"] >= MAX_EXIT_VARIANTS: return False, "exit_variant_limit"
     if spec["family"] != "gp_rule":
-        rows = db.q("SELECT params_json, n_failed, best_stage FROM hyp_registry WHERE group_key=? AND hkey!=? AND n_failed>=1 AND best_stage<=1", (gk, hk))
+        rows = db.q("SELECT params_json, n_failed, best_stage FROM hyp_registry WHERE group_key=? AND hkey!=? AND n_failed>=1 AND best_stage=1", (gk, hk))
         near = sum(1 for x in rows if _adjacent(spec["params"], json.loads(x["params_json"]), spec["family"]))
         if near >= NEIGHBOUR_LIMIT: return False, "noise_neighbourhood"
     return True, None

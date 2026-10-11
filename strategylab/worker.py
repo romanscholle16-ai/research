@@ -6,6 +6,7 @@ from .db import DB
 from .ai import Router
 from .engine import DataStore, run_experiment
 from .agents import Supervisor, NoData
+from .director import Director
 from . import data as D, resources
 from .btcc import get_model
 
@@ -48,6 +49,10 @@ def main():
     store = DataStore(st, make_loader())
     em = get_model(st.exchange_preset)
     sup = Supervisor(db, st, router, store)
+    director = Director(db, st, store, em)
+    from . import audit as _audit
+    try: _audit.backfill_registry(db)
+    except Exception as e: db.log('warn', 'worker', f'registry backfill failed: {e}')
     db.log("info", "worker", f"worker started pid={os.getpid()}")
     db.set("worker_pid", os.getpid())
     stop = False
@@ -80,7 +85,7 @@ def main():
                 if job["kind"] == "plan":
                     ai_ok = db.get("ai_enabled", True)
                     sup.maybe_queue_portfolio(); sup.maybe_queue_forward()
-                    plans = sup.plan(job["payload"].get("n", 8), use_ai=ai_ok)
+                    plans = director.plan_batch(job["payload"].get("n", 24)) if (st.use_director and not os.environ.get("STRATEGYLAB_AI_MOCK")) else sup.plan(job["payload"].get("n", 8), use_ai=ai_ok)
                     for p in plans: db.enqueue("experiment", p, priority=5)
                     db.finish_job(job["id"], {"planned": len(plans)})
                     db.set("blocker", None)

@@ -53,6 +53,7 @@ class Settings:
     ai_model_anthropic: str = "claude-sonnet-5-5"
     ai_max_retries: int = 2
     exchange_preset: str = "conservative"   # conservative | listed_vip0 | adverse (see btcc.PRESETS)
+    use_director: bool = True            # adaptive research director (False = legacy UCB planner)
     # loop pacing
     idle_sleep_s: float = 0.5
     autostart_on_boot: bool = False

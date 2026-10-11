@@ -35,7 +35,9 @@ tick = dict(mode=_r.mode(), paid_enabled=_r.paid_allowed(), seq=seq, ts=now, con
             totals=dict(experiments=counts.get("experiments", 0), promising=counts.get("PROMISING", 0), rejected=counts.get("REJECTED", 0), qualified=counts.get("BACKTEST_QUALIFIED", 0)),
             queue_depth=d.q("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND kind='experiment'")[0]["n"], worker_count=1,
             last_min=d.q("SELECT COUNT(*) n FROM experiments WHERE synthetic=0 AND finished>?", (now - 60,))[0]["n"],
-            errors_1h=d.q("SELECT COUNT(*) n FROM events WHERE level='error' AND ts>?", (now - 3600,))[0]["n"])
+            errors_1h=d.q("SELECT COUNT(*) n FROM events WHERE level='error' AND ts>?", (now - 3600,))[0]["n"],
+            director=dict(mode=(d.get("director_last") or {}).get("mode"), reason=((d.get("director_last") or {}).get("reason") or "")[:400],
+                          since_improve=(d.get("director_last") or {}).get("since_improve"), prechecked_out=d.q("SELECT COUNT(*) n FROM precheck_rejections")[0]["n"]))
 json.dump(tick, open(sys.argv[1], "w"))
 json.dump(dict(seq=seq, last_exp_id=exp_max, last_ts=now), open(seqf, "w"))
 print(f"tick t{seq:07d} prune t{seq-30:07d}" if seq > 30 else f"tick t{seq:07d}")

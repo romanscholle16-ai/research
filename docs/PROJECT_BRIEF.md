@@ -87,3 +87,17 @@ Every rejection is classified (`frequency`, `costs`, `economic_infeasibility`, `
 **Research priority.** Routine timeframes are now 5m, 15m, 1h (planner bonus 5m > 15m > 1h; 4h is excluded from routine research and only reachable through mutation of a parent). 1m is not enabled: 3.4M rows per symbol makes feature memory too heavy for 16 GB with the current in-memory design (needs a streaming rewrite first). Cells whose tests fail frequency/cost/economics screens >= 95% of the time (after >= 60 tests) are de-prioritised automatically. Legacy 4h results stay in the database untouched.
 
 **Live feed.** The worker records the stage of the running test (A..D) and its parameters; the live artifact pushes a snapshot once a minute (queue, running test, finished tests).
+
+## Phase 3b — Intelligent research engine (director, registry, GP)
+
+**Audit baseline** (`docs/EFFICIENCY_REPORT.md`, regenerate with `scripts/efficiency_report.py`): 44.8k tests but only ~10k distinct hypotheses (exit-only duplicates dominated); 77% of compute went to 5m cells that mostly could not meet the cost/economic bar; only 10 of 1,336 legacy PROMISING survive today's frequency+economic screens (all 1h; 4h survivors are excluded by rule).
+
+**Changes**
+- *Pre-signal gates*: `feasibility.precheck_cost` (round-trip cost vs. stop/target geometry) and `novelty_check` (hypothesis registry: ≤3 exit variants per entry, "noise neighbourhood" after 3 failed adjacent-grid neighbours) run before any signal/backtest; rejections are persisted (`experiments.stage='eligibility'`, `precheck_rejections`, `hyp_registry`).
+- *Signal cache* shared across exit variants; near-duplicate signal fingerprint guard.
+- *Director* (`director.py`): Thompson-sampling over (family, symbol, timeframe) arms, reward from train/validation outcomes only per compute-second, exploit/evolve/explore shares, regime hints, stagnation mode (more exploration, forced direction change), human-readable explanation per batch (`director_batches`, `director_last`).
+- *GP grammar* (`grammar.py`, family `gp_rule`): AND of ≤3 atoms with threshold grids, train-only univariate atom screen, niche-capped elites, crossover/mutation; MTF/regime filters via `FILTER_SPACE`.
+- *Portfolio*: pool requires current eligibility; no combining losers; concentrated-profit gate.
+- Qualification gates, locked-test one-shot, paid-API gating are unchanged. Live trading stays disabled.
+
+**Status**: still 0 BACKTEST_QUALIFIED. The +61%/month compounding requirement remains likely unreachable on honest costs; the system keeps searching and reports negatives as-is.
