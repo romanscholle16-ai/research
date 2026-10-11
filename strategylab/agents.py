@@ -11,6 +11,9 @@ import copy, json, math, re, time
 import numpy as np
 from . import strategies as ST
 
+# Research priority by timeframe (task spec): 5m primary, then 1m/15m, 1h only on frequency evidence, 4h+ excluded from routine research.
+TF_PRIORITY = {"1m": 0.6, "5m": 0.9, "15m": 0.45, "1h": 0.0, "4h": -4.0, "1d": -4.0}
+FEASIBILITY_CLASSES = ("frequency", "costs", "economic_infeasibility")
 DEPTH = {"REJECTED": 0, "PROMISING": 3, "BACKTEST_QUALIFIED": 4, "PAPER_VALIDATED": 5, "LIVE_ELIGIBLE": 6}
 
 
@@ -187,7 +190,7 @@ class EvolutionSpecialist:
         if "unstable_parameters_overfit" in reasons or "fails_walk_forward" in reasons: move = rng.choice(["filter", "instrument", "timeframe"])
         if "cost_dominated" in reasons or "cost_sensitive" in reasons:
             s["stop_atr"] = max(s["stop_atr"], 2.0); s["max_hold"] = max(s["max_hold"], 48); move = "exit_wide"
-        if "too_few_trades" in reasons and move == "param": move = "timeframe"
+        if ("too_few_trades" in reasons and move == "param") or "insufficient_frequency" in reasons or "inadequate_trade_frequency" in reasons: move = "timeframe" if rng.random() < 0.7 else move
         note = f"evolve:{move} from {row['sid']} ({','.join(reasons)[:60]})"
         if move == "exit": k = rng.choice(["stop_atr", "target_rr", "max_hold"]); s[k] = rng.choice(ST.EXIT_SPACE[k]).item()
         elif move == "param":
@@ -200,7 +203,7 @@ class EvolutionSpecialist:
             s["filters"] = [x for x in s.get("filters", []) if x["type"] != t] + [f]
         elif move == "side": s["side"] = str(rng.choice([x for x in ST.SIDES if x != s["side"]]))
         elif move == "instrument": sym = str(rng.choice(["BTCUSDT", "ETHUSDT"]))
-        elif move == "timeframe": tf = str(rng.choice(["15m", "1h", "4h"]))
+        elif move == "timeframe": tf = str(rng.choice(["5m", "15m", "1h"] if "insufficient_frequency" in reasons or "inadequate_trade_frequency" in reasons else ["5m", "15m", "1h"]))
         return s, sym, tf, note
 
 
@@ -239,12 +242,22 @@ class Supervisor:
         stats = self.mem.cell_stats(); N = sum(v[0] for v in stats.values()) + 1
         jobs = []; seen_now = set()
         fams = [f for f in ST.FAMILIES]
+        # cells whose tests keep failing the frequency / cost / economics screens are de-prioritised (1% probes remain)
+        from .feasibility import classify
+        cell_n, cell_bad = {}, {}
+        for r_ in self.db.q("SELECT family, symbol, timeframe, reasons FROM lessons ORDER BY id DESC LIMIT 20000"):
+            k_ = (r_["family"], r_["symbol"], r_["timeframe"]); cell_n[k_] = cell_n.get(k_, 0) + 1
+            try: c_ = classify(json.loads(r_["reasons"]))
+            except Exception: c_ = None
+            if c_ in FEASIBILITY_CLASSES: cell_bad[k_] = cell_bad.get(k_, 0) + 1
+        def blocked(f, s, tf):
+            n_ = cell_n.get((f, s, tf), 0); return n_ >= 60 and cell_bad.get((f, s, tf), 0) / n_ >= 0.95
         crowd = {}
         for (f_, s_, t_), (n_, d_) in stats.items(): crowd[f_] = crowd.get(f_, 0) + n_
         def ucb(f, s, tf):
             a = stats.get((f, s, tf), [0, 0.0])
-            pen = min(1.5, 0.15 * math.log1p(crowd.get(f, 0) / 50.0))     # crowding penalty keeps the search diverse
-            return 5.0 + rng.random() if a[0] == 0 else a[1] / a[0] + 0.6 * math.sqrt(math.log(N + 1) / a[0]) + 0.1 * rng.random() - pen
+            pen = min(1.5, 0.15 * math.log1p(crowd.get(f, 0) / 50.0)) - TF_PRIORITY.get(tf, 0.0) + (3.0 if blocked(f, s, tf) else 0.0)   # crowding + timeframe priority + failed-screen block
+            return 5.0 + rng.random() - (TF_PRIORITY.get(tf, 0.0) < -1) * 6.0 if a[0] == 0 else a[1] / a[0] + 0.6 * math.sqrt(math.log(N + 1) / a[0]) + 0.1 * rng.random() - pen
         near = self.evo.near_misses() if N > 30 else []
         if use_ai:
             try:

@@ -31,9 +31,9 @@ def run(F, spec, em, lo, hi, cache=None):
 def gross_R(tr): return (tr.ret / np.maximum(tr.stop_frac, 1e-6)).mean() if len(tr) else 0.0
 
 
-def screen(F, spec, bounds, em, min_trades):
+def screen(F, spec, bounds, em, min_trades, cache=None):
     lo, hi = bounds["train"]
-    tr = run(F, spec, em, lo, hi)
+    tr = run(F, spec, em, lo, hi, cache)
     m = metrics(tr); reasons = []
     years = max((F.epoch_s[hi - 1] - F.epoch_s[lo]) / (365.25 * 86400), 1e-6)
     m["trades_per_year"] = m["n"] / years

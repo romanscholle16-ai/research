@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS ai_usage(
   cost_usd REAL, ok INTEGER, note TEXT);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, ts REAL, level TEXT, source TEXT, message TEXT);
+CREATE TABLE IF NOT EXISTS signal_fp(
+  symbol TEXT, timeframe TEXT, fp TEXT, family TEXT, n_tested INTEGER DEFAULT 0, n_failed INTEGER DEFAULT 0, PRIMARY KEY(symbol,timeframe,fp));
 CREATE TABLE IF NOT EXISTS lessons(
   id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reasons TEXT, strategy_id TEXT);
 """

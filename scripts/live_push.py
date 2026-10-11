@@ -20,14 +20,21 @@ for r in rows:
     m = sm.get("final", {}).get("test") or sm.get("validate", {}).get("val") or sm.get("screen") or {}
     feed.append(dict(id=r["sid"], family=r["family"], sym=r["symbol"].replace("USDT", ""), tf=r["tf"], status=r["status"], stage=stage,
                      trades=m.get("n", 0), R=round(m.get("mean_R", 0), 3), why=[x for x in sm.get("reasons", [])][:3], age=round(now - r["updated"], 1)))
-cj = d.get("current_job"); nxt = d.q("SELECT payload FROM jobs WHERE status='queued' AND kind='experiment' ORDER BY priority,id LIMIT 3")
-q = lambda p: (lambda x: dict(family=x["spec"]["family"], sym=x["symbol"].replace("USDT", ""), tf=x["timeframe"], note=x.get("note", "")))(json.loads(p))
+cj = d.get("current_job"); nxt = d.q("SELECT payload FROM jobs WHERE status='queued' AND kind='experiment' ORDER BY priority,id LIMIT 12")
+q = lambda p: (lambda x: dict(family=x["spec"]["family"], sym=x["symbol"].replace("USDT", ""), tf=x["timeframe"], note=x.get("note", "")[:60], params=x["spec"].get("params"), side=x["spec"].get("side")))(json.loads(p))
 counts = d.counts(0)
 seq = st["seq"] + 1
-tick = dict(seq=seq, ts=now, control=d.get("control", "stopped"), svc_age=round(now - d.get("service_heartbeat", 0), 1),
-            running=(dict(kind=cj["kind"], sym=(cj.get("symbol") or "").replace("USDT", ""), tf=cj.get("timeframe"), note=cj.get("note", ""), elapsed=round(now - cj["since"], 1)) if cj else None),
+from strategylab.ai import Router
+from strategylab.config import Settings
+_st = Settings.load(); _r = Router(d, _st)
+tick = dict(mode=_r.mode(), paid_enabled=_r.paid_allowed(), seq=seq, ts=now, control=d.get("control", "stopped"), svc_age=round(now - d.get("service_heartbeat", 0), 1),
+            running=(dict(kind=cj["kind"], sym=(cj.get("symbol") or "").replace("USDT", ""), tf=cj.get("timeframe"), note=cj.get("note", ""), elapsed=round(now - cj["since"], 1),
+                         stage=cj.get("stage"), stage_elapsed=round(now - cj.get("stage_since", cj["since"]), 1), family=cj.get("family"), params=cj.get("params"), side=cj.get("side"),
+                         stop_atr=cj.get("stop_atr"), target_rr=cj.get("target_rr"), max_hold=cj.get("max_hold"), filters=cj.get("filters")) if cj else None),
             next=[q(x["payload"]) for x in nxt], feed=feed, completed_since_last=n_since, since_secs=round(now - st["last_ts"], 1) if st["last_ts"] else None,
             totals=dict(experiments=counts.get("experiments", 0), promising=counts.get("PROMISING", 0), rejected=counts.get("REJECTED", 0), qualified=counts.get("BACKTEST_QUALIFIED", 0)),
+            queue_depth=d.q("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND kind='experiment'")[0]["n"], worker_count=1,
+            last_min=d.q("SELECT COUNT(*) n FROM experiments WHERE synthetic=0 AND finished>?", (now - 60,))[0]["n"],
             errors_1h=d.q("SELECT COUNT(*) n FROM events WHERE level='error' AND ts>?", (now - 3600,))[0]["n"])
 json.dump(tick, open(sys.argv[1], "w"))
 json.dump(dict(seq=seq, last_exp_id=exp_max, last_ts=now), open(seqf, "w"))

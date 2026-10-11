@@ -4,7 +4,7 @@ import json, time
 import pandas as pd
 from collections import OrderedDict
 import numpy as np
-from . import strategies as ST, validation as V, data as D
+from . import strategies as ST, validation as V, data as D, feasibility as FE
 from .backtest import period_bounds, metrics, Trades
 from .btcc import DEFAULT
 from .features import Features
@@ -51,7 +51,7 @@ def _record_dataset(db, meta):
           meta["has_funding"], meta["has_taker"], meta["synthetic"], meta["notes"], time.time()))
 
 
-def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=DEFAULT) -> dict:
+def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=DEFAULT, stage_cb=lambda name: None) -> dict:
     spec, symbol, tf = payload["spec"], payload["symbol"], payload["timeframe"]
     errs = ST.validate_spec(spec)
     if errs: raise ValueError("invalid spec: " + "; ".join(errs))
@@ -67,7 +67,7 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
     db.x("INSERT OR IGNORE INTO strategies(id,created,hypothesis_id,parent_id,family,spec_json,spec_hash) VALUES(?,?,?,?,?,?,?)",
          (sid, time.time(), payload.get("hypothesis_id"), payload.get("parent_id"), spec["family"], json.dumps(spec), ST.spec_hash(spec)))
     rng = np.random.default_rng(int(ST.spec_hash(spec), 16) % 2**32)
-    stage_reasons = {}; summary = {"dataset": meta["id"], "synthetic": bool(syn)}
+    stage_reasons = {}; summary = {"dataset": meta["id"], "synthetic": bool(syn)}; fp_key = None
     t_start = time.time()
     min_trades = 40 if tf == "4h" else 60
 
@@ -76,7 +76,10 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
              (sid, stage, symbol, tf, meta["id"], t_start, time.time(), status, json.dumps(metrics_, default=float), json.dumps(reasons), syn))
 
     def finish(status, reasons):
-        summary["reasons"] = reasons
+        summary["reasons"] = reasons; summary["failure_class"] = FE.classify(reasons) if status == "REJECTED" else None
+        if fp_key:                                              # remember how often entries with this signal fingerprint failed
+            db.x("INSERT INTO signal_fp(symbol,timeframe,fp,family,n_tested,n_failed) VALUES(?,?,?,?,1,?) ON CONFLICT(symbol,timeframe,fp) DO UPDATE SET n_tested=n_tested+1, n_failed=n_failed+?",
+                 (symbol, tf, fp_key, spec["family"], int(status == "REJECTED"), int(status == "REJECTED")))
         db.x("INSERT OR REPLACE INTO strategy_status(strategy_id,symbol,timeframe,status,updated,summary_json,synthetic) VALUES(?,?,?,?,?,?,?)",
              (sid, symbol, tf, status, time.time(), json.dumps(summary, default=float), syn))
         if status == "REJECTED":
@@ -84,10 +87,23 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
                  (time.time(), spec["family"], symbol, tf, json.dumps(reasons), sid))
         return {"strategy_id": sid, "status": status, "reasons": reasons}
 
-    tr, m, rs = V.screen(F, spec, bounds, em, min_trades); hb()
+    # ---- Stage A: cheap eligibility + economic feasibility (no backtest, no optimisation)
+    stage_cb("A eligibility")
+    sig = ST.signals(F, spec); lo_, hi_ = bounds["train"]
+    ea = FE.stage_a(F, spec, bounds, em, st, sig); summary["eligibility"] = ea
+    fp_key = FE.signal_fingerprint(F, spec, lo_, hi_, sig); ea["signal_fp"] = fp_key
+    if ea["decision"] == "pass":
+        dup = db.q("SELECT n_failed FROM signal_fp WHERE symbol=? AND timeframe=? AND fp=?", (symbol, tf, fp_key))
+        if dup and dup[0]["n_failed"] >= 3:                     # same entries already failed 3 times => exit-only tweak of a failed hypothesis
+            ea["decision"] = "reject"; ea["reasons"] = ["near_duplicate_failed_hypothesis"]; ea["failure_class"] = "duplicate"
+    record("eligibility", "pass" if ea["decision"] == "pass" else "fail", ea, ea["reasons"])
+    if ea["decision"] == "reject": return finish("REJECTED", ea["reasons"])
+    stage_cb("B fast backtest")
+    tr, m, rs = V.screen(F, spec, bounds, em, min_trades, {ST.spec_hash(spec): sig}); hb()
     summary["screen"] = m; record("screen", "fail" if rs else "pass", m, rs)
     if rs: return finish("REJECTED", rs)
     stage_reasons["screen"] = rs
+    stage_cb("C robustness")
     out, rs, trv = V.validate(F, spec, bounds, em, st, tr, rng); hb()
     summary["validate"] = out; record("validate", "fail" if rs else "pass", out, rs)
     if rs: return finish("REJECTED", rs)
@@ -95,6 +111,7 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
     n_tested = db.q("SELECT COUNT(*) n FROM strategies")[0]["n"]
     locked = db.q("SELECT 1 FROM experiments WHERE strategy_id=? AND symbol=? AND timeframe=? AND stage='final'", (sid, symbol, tf))
     if locked: return finish("PROMISING", ["test_already_consumed"])
+    stage_cb("D qualification")
     out, rs, test = V.final_stage(F, spec, bounds, em, st, symbol, n_tested, trtv); hb()
     summary["final"] = out; record("final", "fail" if rs else "pass", {k: v for k, v in out.items() if k != "capital_all"}, rs)
     allt = Trades.concat([trtv, test]) if test is not None else trtv

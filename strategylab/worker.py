@@ -62,14 +62,19 @@ def main():
             db.set("blocker", "low_system_memory"); time.sleep(10); continue
         try:
             pending = db.q("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]["n"]
-            if pending == 0: db.enqueue("plan", {"n": 8}, priority=1)       # exploration never starves behind maintenance jobs
+            if pending == 0: db.enqueue("plan", {"n": 24}, priority=1)       # exploration never starves behind maintenance jobs
             loop_n = db.get("loop_n", 0) + 1; db.set("loop_n", loop_n)
             job = db.claim_job(exclude=("recheck",) if loop_n % 3 else ())  # rechecks get 1/3 of the slots
             if job is None:
                 time.sleep(st.idle_sleep_s); continue
-            db.heartbeat(job["id"]); db.set("current_job", {"id": job["id"], "kind": job["kind"], "since": time.time(),
-                                                           "note": job["payload"].get("note", ""), "symbol": job["payload"].get("symbol"),
-                                                           "timeframe": job["payload"].get("timeframe")})
+            sp_ = job["payload"].get("spec") or {}
+            cj_ = {"id": job["id"], "kind": job["kind"], "since": time.time(), "note": job["payload"].get("note", ""),
+                   "symbol": job["payload"].get("symbol"), "timeframe": job["payload"].get("timeframe"), "stage": "starting",
+                   "family": sp_.get("family"), "params": sp_.get("params"), "side": sp_.get("side"), "stop_atr": sp_.get("stop_atr"),
+                   "target_rr": sp_.get("target_rr"), "max_hold": sp_.get("max_hold"), "filters": sp_.get("filters")}
+            db.heartbeat(job["id"]); db.set("current_job", cj_)
+            def stage_cb(name, cj_=cj_):
+                cj_["stage"] = name; cj_["stage_since"] = time.time(); db.set("current_job", cj_)
             try:
                 maybe_inject(db, job["kind"])
                 if job["kind"] == "plan":
@@ -96,7 +101,7 @@ def main():
                     res = run_portfolio(db, st, store, hb=lambda: db.heartbeat(job["id"])); db.finish_job(job["id"], res)
                     db.log("info", "portfolio", f"portfolio build: {res}")
                 elif job["kind"] == "experiment":
-                    res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]), em=em)
+                    res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]), em=em, stage_cb=stage_cb)
                     db.finish_job(job["id"], res)
                     db.set("cycles", db.get("cycles", 0) + 1)
                     db.set("last_experiment", {**res, "symbol": job["payload"]["symbol"], "timeframe": job["payload"]["timeframe"],

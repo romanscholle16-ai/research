@@ -46,6 +46,7 @@ def status(db):
         blocker=db.get("blocker"), counts_real=real, counts_synthetic=syn, best_validated=best_val,
         queue=db.q("SELECT status, COUNT(*) n FROM jobs GROUP BY status"),
         ai=dict(state=db.get("ai_state", "unknown"), **Router(db, st).status()),
+        research_mode=Router(db, st).mode(), paid_apis_enabled=Router(db, st).paid_allowed(), exchange_preset=st.exchange_preset, timeframes=st.timeframes,
         events=db.q("SELECT ts,level,source,message FROM events WHERE level IN ('warn','error') ORDER BY id DESC LIMIT 15"),
         datasets=ds, rss_mb=resources.rss_mb(), free_mem_mb=resources.free_mem_mb(),
         now=time.time())

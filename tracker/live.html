@@ -37,6 +37,15 @@ h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mu
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .k{color:var(--mut);font-size:.75rem}.v{font-family:var(--mono);font-size:1.35rem;font-weight:600;font-variant-numeric:tabular-nums}
 .foot{color:var(--mut);font-size:.8rem}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.step{font-family:var(--mono);font-size:.72rem;padding:3px 9px;border-radius:6px;border:1px solid var(--line);color:var(--mut)}
+.step.done{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.step.active{background:var(--acc-soft);color:var(--acc);border-color:var(--acc);font-weight:600}
+.kv{display:flex;gap:6px 14px;flex-wrap:wrap;font-family:var(--mono);font-size:.78rem;color:var(--mut);margin-top:6px}
+.qrow{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;padding:5px 0;border-top:1px solid var(--line);font-size:.84rem}
+.qrow:first-child{border-top:0}.qrow span:first-child{color:var(--mut);font-family:var(--mono)}
+.summary{display:flex;gap:8px 22px;flex-wrap:wrap}
+.summary b{font-family:var(--mono)}
 .tg{background:none;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:.8rem}
 .tg:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .next{display:flex;gap:6px;flex-wrap:wrap}
@@ -46,12 +55,17 @@ h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mu
 
 <div class="wrap">
   <div class="top">
-    <div><h1>Live Test Feed</h1><div class="foot">Strategy search on BTC and ETH perpetuals. Research only, no live trading.</div></div>
+    <div><h1>Live Test Feed</h1><div class="foot">Strategy search on BTC and ETH perpetuals. Research only, no live trading. <span id="mode"></span></div></div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span id="pill" class="pill off"><span class="dot"></span><span id="pilltxt">Waiting for first update</span></span><button class="tg" id="theme" type="button">Theme</button></div>
   </div>
 
   <div class="panel">
-    <h2>Running now</h2>
+    <h2>Live right now</h2>
+    <div class="summary" id="summary"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Test running now</h2>
     <div class="now" id="now"><span class="foot">Waiting for the first update from the research service…</span></div>
     <div class="bar" title="Time until the next update"><i id="prog"></i></div>
   </div>
@@ -61,17 +75,17 @@ h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mu
     <div style="display:grid;gap:16px;align-content:start;min-width:0">
       <div class="panel"><h2>Throughput</h2><div id="spark"></div><div class="foot" id="rate"></div></div>
       <div class="panel"><h2>Totals so far</h2><div class="stats" id="stats"></div></div>
-      <div class="panel"><h2>Queued next</h2><div class="next" id="next"></div></div>
+      <div class="panel"><h2>Queued next <span class="foot" id="qmeta"></span></h2><div id="next"></div></div>
     </div>
   </div>
-  <p class="foot" id="foot">Each update lists the newest tests finished since the previous one. Hundreds can finish between updates, so the list is a sample of the latest 40. A test is one strategy tried on one market and timeframe, taken through screening, validation and a locked-period check.</p>
+  <p class="foot" id="foot">The research service runs one test at a time. This page receives a new snapshot about once a minute (the browser cannot reach the research machine directly), so the running test and queue are as of the last update; hundreds of quick tests can finish between updates, so the finished list is a sample of the newest 40. Stages: A eligibility (can it trade often enough to matter), B fast backtest with costs, C robustness, D locked-test qualification.</p>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n).toLocaleString('en-US');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let ticks = [], gotAt = 0, shown = new Set(), cadence = 120;
+let ticks = [], gotAt = 0, shown = new Set(), cadence = 60;
 
 function render() {
   if (!ticks.length) return;
@@ -79,12 +93,24 @@ function render() {
   $('theme').onclick = () => { const r = document.documentElement; const cur = r.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'); r.dataset.theme = cur === 'dark' ? 'light' : 'dark'; };
   if (ticks.length > 1 && ticks[0].since_secs) cadence = Math.max(30, ticks[0].since_secs);
 
+  $('mode').textContent = t.mode ? ' · Mode: ' + t.mode + (t.paid_enabled ? '' : ' · paid AI calls off') : '';
   // running now
   const r = t.running;
+  const STAGES = ['A eligibility','B fast backtest','C robustness','D qualification'];
+  const stg = r && r.stage ? r.stage : '';
+  const si = STAGES.indexOf(stg);
+  const fam = r && r.family ? esc(r.family.replaceAll('_',' ')) : (r ? esc(r.kind) : '');
+  const pr = r && r.params ? Object.entries(r.params).map(([k,v]) => k+'='+(Array.isArray(v)?v.join('|'):v)).join(' ') : '';
   $('now').innerHTML = r
-    ? `<span class="spin" aria-hidden="true"></span><div><b class="mono">${esc(r.sym)} ${esc(r.tf)}</b> <span class="chip">${esc(r.kind)}</span><div class="foot">${esc((r.note||'').replace(/^evolve:/,'evolving: ').slice(0,110))}</div></div><span class="mono foot" id="elapsed"></span>`
+    ? `<span class="spin" aria-hidden="true"></span><div><b>${fam}</b> <span class="mono">${esc(r.sym)} ${esc(r.tf)}</span> <span class="chip">${esc(r.kind)}</span>
+        <div class="kv"><span>${esc(pr)}</span><span>side ${esc(r.side||'-')}</span><span>stop ${r.stop_atr??'-'} ATR</span><span>target ${r.target_rr||'none'}R</span><span>max hold ${r.max_hold??'-'} bars</span>${(r.filters&&r.filters.length)?'<span>filters '+esc(r.filters.map(f=>f.type).join('+'))+'</span>':''}</div>
+        <div class="steps">${STAGES.map((n,i)=>`<span class="step ${i<si?'done':i===si?'active':''}">${n}</span>`).join('')}${si<0&&stg?`<span class="step active">${esc(stg)}</span>`:''}</div>
+        <div class="foot" style="margin-top:6px">${esc((r.note||'').replace(/^evolve:/,'evolving: ').slice(0,120))}</div></div><span class="mono foot" id="elapsed"></span>`
     : `<span class="foot">Between jobs at the moment of the last update.</span>`;
-  $('next').innerHTML = (t.next||[]).map(n => `<span class="chip">${esc(n.family)} · ${esc(n.sym)} ${esc(n.tf)}</span>`).join('') || '<span class="foot">Nothing queued at the last update.</span>';
+  const nx = t.next || [];
+  $('next').innerHTML = nx.map((n,i) => `<div class="qrow"><span>${i+1}</span><span><b>${esc(n.family.replaceAll('_',' '))}</b> <span class="mono">${esc(n.sym)} ${esc(n.tf)}</span> <span class="foot">${esc(n.params?Object.entries(n.params).map(([k,v])=>k+'='+(Array.isArray(v)?v.join('|'):v)).join(' '):'')}</span></span></div>`).join('') || '<span class="foot">Nothing queued at the last update.</span>';
+  $('qmeta').textContent = '· ' + fmt(t.queue_depth ?? nx.length) + ' waiting, next ' + nx.length + ' shown';
+  $('summary').innerHTML = `<span><b>${t.worker_count ?? 1}</b> worker</span><span><b>${r?1:0}</b> test running</span><span><b>${fmt(t.queue_depth ?? nx.length)}</b> queued</span><span><b>${fmt(t.last_min ?? 0)}</b> finished in the last minute</span><span><b>${fmt(t.completed_since_last)}</b> since the previous update</span>`;
 
   // feed
   const firstLoad = shown.size === 0;
@@ -119,7 +145,7 @@ function render() {
 function tickClock() {
   if (!ticks.length) return;
   const t = ticks[0], since = (Date.now() - gotAt) / 1000;
-  const el = $('elapsed'); if (el && t.running) el.textContent = 'running ' + Math.round(t.running.elapsed + since) + ' s';
+  const el = $('elapsed'); if (el && t.running) el.textContent = 'running ' + Math.round(t.running.elapsed + since) + ' s (at last update ' + Math.round(t.running.elapsed) + ' s)';
   const running = t.control === 'running' && t.svc_age < 60;
   const pill = $('pill'), txt = $('pilltxt');
   if (!running) { pill.className='pill off'; txt.textContent = t.control === 'running' ? 'Research service silent at last update' : 'Research '+t.control; }

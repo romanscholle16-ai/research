@@ -51,12 +51,14 @@ def _post(url, headers, body, timeout=60):
 
 class Provider:
     name = "base"
+    paid = False
     def available(self) -> bool: return False
     def complete(self, system: str, prompt: str, max_tokens: int) -> tuple[str, int, int]: raise NotImplementedError
 
 
 class Anthropic(Provider):
     name = "anthropic"
+    paid = True
     def __init__(self, model): self.model = model
     def available(self): return bool(os.environ.get("ANTHROPIC_API_KEY"))
     def complete(self, system, prompt, max_tokens):
@@ -67,6 +69,7 @@ class Anthropic(Provider):
 
 class OpenAICompat(Provider):
     name = "openai_compat"
+    paid = True
     def available(self): return bool(os.environ.get("OPENAI_API_KEY"))
     def complete(self, system, prompt, max_tokens):
         base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -79,6 +82,7 @@ class OpenAICompat(Provider):
 
 class Ollama(Provider):
     name = "ollama"
+    local = True
     def available(self):
         try:
             urllib.request.urlopen(os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/tags", timeout=1); return True
@@ -97,6 +101,22 @@ class Router:
         self.providers = providers if providers is not None else [Anthropic(settings.ai_model_anthropic), OpenAICompat(), Ollama()]
         self.cool = {}   # provider -> retry-at
 
+    def paid_allowed(self):
+        """Both the setting AND an explicit environment opt-in are required; either missing => paid providers can never be called."""
+        return bool(self.st.allow_paid_providers) and os.environ.get("STRATEGYLAB_ALLOW_PAID") == "1"
+
+    def usable(self, p):
+        if getattr(p, "paid", False) and not self.paid_allowed(): return False
+        if getattr(p, "local", False):
+            from . import resources
+            if not self.st.allow_local_models or resources.free_mem_mb() < self.st.local_model_min_free_mb: return False
+        return True
+
+    def mode(self):
+        if self.paid_allowed(): return "PAID APIs ENABLED (explicit opt-in)"
+        loc = [p.name for p in self.providers if getattr(p, "local", False) and self.usable(p) and p.available()]
+        return "deterministic + local model (" + ",".join(loc) + "); paid APIs disabled" if loc else "deterministic only; paid APIs disabled"
+
     def _spent(self, since):
         r = self.db.q("SELECT COALESCE(SUM(cost_usd),0) c FROM ai_usage WHERE ts>=?", (since,))
         return r[0]["c"]
@@ -108,18 +128,21 @@ class Router:
     def status(self):
         out = []
         for p in self.providers:
-            out.append(dict(name=p.name, available=bool(p.available()), cooldown_s=max(0, int(self.cool.get(p.name, 0) - time.time()))))
-        return dict(providers=out, budget_ok=self.budget_ok(), spent_24h=self._spent(time.time() - 86400), spent_30d=self._spent(time.time() - 30 * 86400))
+            blocked = not self.usable(p)
+            out.append(dict(name=p.name, available=False if blocked else bool(p.available()), blocked=blocked, paid=bool(getattr(p, 'paid', False)), cooldown_s=max(0, int(self.cool.get(p.name, 0) - time.time()))))
+        return dict(mode=self.mode(), paid_enabled=self.paid_allowed(), providers=out, budget_ok=self.budget_ok(), spent_24h=self._spent(time.time() - 86400), spent_30d=self._spent(time.time() - 30 * 86400))
 
     def ask(self, system, prompt, max_tokens=1500) -> AIResult | None:
         prompt = scrub(prompt)      # never send keys to a model, even by accident
         """Returns None when no AI is usable right now (caller falls back to deterministic logic). Never raises."""
+        if not any(self.usable(x) and x.name in self.st.ai_provider_order for x in self.providers):
+            self.db.set("ai_state", "paid_blocked_no_local_model"); return None
         if not self.budget_ok():
             self.db.set("ai_state", "budget_exhausted"); return None
         reason = None
         for name in self.st.ai_provider_order:
             p = next((x for x in self.providers if x.name == name), None)
-            if p is None or time.time() < self.cool.get(p.name, 0) or not p.available(): continue
+            if p is None or not self.usable(p) or time.time() < self.cool.get(p.name, 0) or not p.available(): continue
             for attempt in range(self.st.ai_max_retries + 1):
                 try:
                     text, ti, to = p.complete(system, prompt, max_tokens)

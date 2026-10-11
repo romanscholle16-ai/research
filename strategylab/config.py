@@ -44,7 +44,12 @@ class Settings:
     # AI
     ai_daily_budget_usd: float = 2.0
     ai_monthly_budget_usd: float = 40.0
-    ai_provider_order: list = field(default_factory=lambda: ["anthropic", "openai_compat", "ollama", "deterministic"])
+    # ZERO-API-COST MODE: paid providers (Anthropic/OpenAI-compatible) are blocked unless BOTH this flag is true AND the environment
+    # variable STRATEGYLAB_ALLOW_PAID=1 is set. Default is off; research runs fully deterministic (optionally a free LOCAL model via Ollama).
+    allow_paid_providers: bool = False
+    allow_local_models: bool = True       # free local inference (Ollama) only if installed AND enough free RAM
+    local_model_min_free_mb: int = 6000
+    ai_provider_order: list = field(default_factory=lambda: ["ollama"])
     ai_model_anthropic: str = "claude-sonnet-5-5"
     ai_max_retries: int = 2
     exchange_preset: str = "conservative"   # conservative | listed_vip0 | adverse (see btcc.PRESETS)
