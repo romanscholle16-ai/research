@@ -34,4 +34,11 @@ out = dict(generated=now, control=d.get("control", "stopped"), service_age_s=(no
            restarts_24h=d.q("SELECT COUNT(*) n FROM events WHERE message LIKE 'worker exited%' AND ts>?", (now - 86400,))[0]["n"],
            queue=d.q("SELECT kind, COUNT(*) n FROM jobs WHERE status='queued' GROUP BY 1"),
            data=d.q("SELECT symbol,timeframe,rows,start_ts,end_ts FROM datasets WHERE synthetic=0 ORDER BY symbol,timeframe"))
+from strategylab import agentboard as AB
+out["agents"] = AB.agents(d); out["milestones"] = AB.milestones(d)
+ep = d.get("epoch_start")
+if not ep:
+    ep = now - 3 * 3600
+out["leverage_epoch"] = dict(preset=__import__("strategylab.config", fromlist=["Settings"]).Settings.load().exchange_preset,
+    funnel=[[r["stage"] + "/" + r["status"], r["n"]] for r in d.q("SELECT stage,status,COUNT(*) n FROM experiments WHERE synthetic=0 AND started>? GROUP BY 1,2 ORDER BY n DESC LIMIT 10", (ep,))])
 json.dump(out, open(sys.argv[1] if len(sys.argv) > 1 else "/dev/stdout", "w"), default=float)

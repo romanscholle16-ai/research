@@ -73,6 +73,11 @@ svg text{fill:var(--mut);font-family:var(--mono);font-size:11px}
     <div class="panel"><h2>What blocks the promising ones</h2><div id="blockers"></div></div>
   </div>
 
+  <div class="two">
+    <div class="panel"><h2>Research agents</h2><div class="scroll"><table id="agents"></table></div></div>
+    <div class="panel"><h2>Milestones and the 250x/500x run</h2><div id="miles"></div><p class="foot" id="levnote"></p></div>
+  </div>
+
   <p class="foot" id="foot"></p>
 </div>
 
@@ -143,6 +148,9 @@ $('cands').innerHTML = '<tr><th>Strategy</th><th>Market</th><th>Status</th><th c
 const bars=(arr,el)=>{const m=Math.max(...arr.map(a=>a[1]),1); $(el).innerHTML=arr.map(([k,v])=>`<div class="bar"><span>${k.replaceAll('_',' ')}</span><i style="width:${(100*v/m).toFixed(1)}%"></i><span class="mono" style="text-align:right">${fmt(v)}</span></div>`).join('');};
 bars(S.reasons,'reasons'); bars(S.blockers,'blockers');
 
+if(S.agents){ $('agents').innerHTML='<tr><th>Agent</th><th>State</th><th>Last</th><th>Metric</th></tr>'+S.agents.map(a=>`<tr><td>${a.agent}</td><td>${a.state}</td><td class="n mono">${a.last_s==null?'-':(a.last_s<120?a.last_s+'s':Math.round(a.last_s/60)+'m')}</td><td style="white-space:normal;min-width:160px">${a.metric}</td></tr>`).join('');
+  const m=S.milestones; $('miles').innerHTML=[['Experiments',m.total_experiments],['Duplicates avoided',m.duplicates_avoided],['Early rejections',m.early_rejections],['Passed frequency+cost screen',m.passed_frequency_cost_screen],['Positive screen',m.positive_screen],['Validated',m.validated],['Reached locked test and passed',m.final_pass],['Backtest-qualified',m.qualified],['Paper-validated',m.paper_validated],['Validated per 1,000 experiments',m.validated_per_1k_experiments]].map(([k,v])=>`<div class="bar"><span>${k}</span><i style="width:0;min-width:0"></i><b class="mono">${typeof v==='number'?v.toLocaleString('en-US'):v}</b></div>`).join('');
+  const L=S.leverage_epoch||{funnel:[]}; $('levnote').textContent='Active cost model: '+L.preset+'. Recent funnel: '+L.funnel.map(f=>f[0]+' '+f[1]).join(', ')+'. Failure causes diagnosed: '+((m.causes||[]).map(c=>c[0]+' '+c[1]).join(', ')||'none yet')+'.'; }
 const when=new Date(S.generated*1000).toLocaleString('en-US',{dateStyle:'medium',timeStyle:'short'});
 const ds=S.data[0]; const span=ds?`${new Date(ds.start_ts*1000).getUTCFullYear()}–${new Date(ds.end_ts*1000).getUTCFullYear()}`:'';
 $('foot').textContent=`Snapshot taken ${when}, ${age(snapAge)} before you opened it. Data: BTCUSDT and ETHUSDT, ${span}, Binance USD-M history used as a stand-in for BTCC. BTCC fees and margin rules are unverified assumptions. AI state: ${S.ai_state.replaceAll('_',' ')}. Errors in the last hour: ${S.errors_1h}.`;
