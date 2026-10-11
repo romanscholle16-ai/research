@@ -15,7 +15,8 @@ def test_features_are_causal_for_all_families():
     for fam, f in ST.FAMILIES.items():
         params = {k: (g[0] if g else None) for k, g in f["space"].items()}
         if fam == "session_drift": params = {"hours": [3], "dir": 1}
-        spec = dict(family=fam, params=params, side="both", stop_atr=2, target_rr=2, max_hold=24, atr_n=14, filters=[])
+        if fam == "gp_rule": params = {"rule": [["ret12_gt", 0.5], ["er20_gt", 0.3]], "side": "long"}
+        spec = dict(family=fam, params=params, side="long" if fam == "gp_rule" else "both", stop_atr=2, target_rr=2, max_hold=24, atr_n=14, filters=[])
         res = V.lookahead_test(df, spec, ref=ref)
         assert res["passed"], (fam, res)
 

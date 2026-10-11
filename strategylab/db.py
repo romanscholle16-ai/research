@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, ts REAL, level TEXT, source TEXT, message TEXT);
 CREATE TABLE IF NOT EXISTS signal_fp(
   symbol TEXT, timeframe TEXT, fp TEXT, family TEXT, n_tested INTEGER DEFAULT 0, n_failed INTEGER DEFAULT 0, PRIMARY KEY(symbol,timeframe,fp));
+CREATE TABLE IF NOT EXISTS hyp_registry(
+  hkey TEXT PRIMARY KEY, entry_key TEXT, group_key TEXT, family TEXT, symbol TEXT, timeframe TEXT, side TEXT, params_json TEXT,
+  n_variants INTEGER DEFAULT 0, n_failed INTEGER DEFAULT 0, best_stage INTEGER DEFAULT 0, first_ts REAL, last_ts REAL);
+CREATE INDEX IF NOT EXISTS ix_hyp_group ON hyp_registry(group_key);
+CREATE TABLE IF NOT EXISTS precheck_rejections(id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reason TEXT, hkey TEXT);
+CREATE TABLE IF NOT EXISTS director_batches(id INTEGER PRIMARY KEY, ts REAL, mode TEXT, n INTEGER, composition_json TEXT, reason TEXT);
+CREATE TABLE IF NOT EXISTS research_metrics(id INTEGER PRIMARY KEY, ts REAL, body TEXT);
+CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS lessons(
   id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reasons TEXT, strategy_id TEXT);
 """

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib, json, itertools
 import numpy as np
 
-EXIT_SPACE = {"stop_atr": [1.0, 1.5, 2.0, 3.0], "target_rr": [0, 1.0, 1.5, 2.0, 3.0], "max_hold": [12, 24, 48, 96], "atr_n": [14]}
+EXIT_SPACE = {"stop_atr": [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0], "target_rr": [0, 1.0, 1.5, 2.0, 3.0], "max_hold": [12, 24, 48, 96, 192, 288], "atr_n": [14]}   # wide stops/long holds: only way short timeframes can clear costs
 SIDES = ["long", "short", "both"]
 
 
@@ -51,23 +51,19 @@ def sig_sweep(F, p):
 
 
 def sig_fvg(F, p):
-    """ICT fair value gap: 3-candle imbalance; enter when price retests the gap, with HTF-like trend filter."""
-    n = F.n; h, l, c = F.h, F.l, F.c
-    bull_gap_lo = np.full(n, np.nan); bull_gap_hi = np.full(n, np.nan)
-    bear_gap_lo = np.full(n, np.nan); bear_gap_hi = np.full(n, np.nan)
-    min_gap = p["min_gap_atr"] * F.atr(14)
-    for i in range(2, n):
-        if l[i] > h[i - 2] and (l[i] - h[i - 2]) > _nz(min_gap[i]) > 0:   # bullish gap [h[i-2], l[i]] known at close i
-            bull_gap_lo[i], bull_gap_hi[i] = h[i - 2], l[i]
-        if h[i] < l[i - 2] and (l[i - 2] - h[i]) > _nz(min_gap[i]) > 0:
-            bear_gap_lo[i], bear_gap_hi[i] = h[i], l[i - 2]
+    """ICT fair value gap: 3-candle imbalance; enter when price retests the gap, with a trend filter. Fully vectorised."""
     import pandas as pd
-    def hold(a): return pd.Series(a).ffill(limit=p["expiry"]).to_numpy()
-    bl, bh, sl_, sh = hold(bull_gap_lo), hold(bull_gap_hi), hold(bear_gap_lo), hold(bear_gap_hi)
+    n = F.n; h, l, c = F.h, F.l, F.c
+    min_gap = np.nan_to_num(p["min_gap_atr"] * F.atr(14))
+    bull = np.zeros(n, bool); bear = np.zeros(n, bool)
+    bull[2:] = (l[2:] > h[:-2]) & ((l[2:] - h[:-2]) > min_gap[2:]) & (min_gap[2:] > 0)     # gap [h[i-2], l[i]] known at close i
+    bear[2:] = (h[2:] < l[:-2]) & ((l[:-2] - h[2:]) > min_gap[2:]) & (min_gap[2:] > 0)
+    bl = np.where(bull, np.r_[np.nan, np.nan, h[:-2]], np.nan); bh = np.where(bull, l, np.nan)
+    sl_ = np.where(bear, h, np.nan); sh = np.where(bear, np.r_[np.nan, np.nan, l[:-2]], np.nan)
+    hold = lambda a: pd.Series(a).ffill(limit=p["expiry"]).to_numpy()
+    sh1 = lambda a: np.r_[np.nan, a[:-1]]                                                   # usable from the NEXT bar
+    bl, bh, sl_, sh = (sh1(hold(x)) for x in (bl, bh, sl_, sh))
     ef = F.ema(p["trend_n"])
-    # retest: current low dips into gap but close stays above gap low (gap respected), bar is after formation (ffill shifts by 1)
-    sh1 = lambda a: np.r_[np.nan, a[:-1]]
-    bl, bh, sl_, sh = sh1(bl), sh1(bh), sh1(sl_), sh1(sh)
     L = (F.l <= bh) & (F.c > bl) & (F.c > F.o) & (F.c > ef)
     S = (F.h >= sl_) & (F.c < sh) & (F.c < F.o) & (F.c < ef)
     return L, S
@@ -160,6 +156,11 @@ def sig_ratio(F, p):
     return z < -p["k"], z > p["k"]
 
 
+def sig_gp(F, p):
+    from . import grammar
+    return grammar.rule_signals(F, p["rule"], p["side"])
+
+
 FAMILIES = {
     "donchian_breakout": dict(fn=sig_donchian, space={"n": [20, 40, 80, 160], "trend_n": [0, 100, 200]}, requires=[],
         text="Range breakouts continue because stop clusters beyond ranges trigger forced order flow.",
@@ -225,6 +226,10 @@ FAMILIES = {
         text="The ETH/BTC log-ratio mean-reverts; trade the relatively cheap asset long and the rich asset short.",
         why="Cross-asset relative value: shared beta factor, idiosyncratic flows are transient.",
         falsify="Extreme ratio z-scores are not followed by convergence."),
+    "gp_rule": dict(fn=sig_gp, space={"rule": None, "side": None}, requires=[],
+        text="Interpretable conjunctions of causal market-state conditions discovered by genetic programming over a constrained grammar.",
+        why="Edges are more likely to live in conditional states (momentum x regime x flow x session) than in single indicators; GP searches this space with diversity control.",
+        falsify="Rule fails the identical out-of-sample, cost-stress, placebo and multiple-testing gates as every other family."),
     "failed_breakout_fade": dict(fn=sig_failbreak, space={"n": [20, 40, 80], "k": [1, 2, 4]}, requires=[],
         text="Breakouts that close back inside the range within a few bars trap breakout traders; the squeeze of their stops drives a reversal.",
         why="Trapped-trader dynamics: stops of late breakout buyers/sellers fuel the move back (momentum exhaustion).",
@@ -247,7 +252,7 @@ FILTER_SPACE = {  # optional AND-filters appended by Evolution agent
     "ema_trend": {"n": [50, 100, 200]},
     "atr_pct": {"w": [500], "lo": [0.2, 0.4], "hi": [0.8, 1.0]},
     "session": {"hours": [list(range(0, 8)), list(range(8, 16)), list(range(16, 24))]},
-    "htf_trend": {"mult": [4, 16], "n": [20, 50]},
+    "htf_trend": {"mult": [4, 12, 16, 48], "n": [20, 50]},
     "er_regime": {"n": [20, 50], "mode": ["trend", "range"], "thr": [0.2, 0.3]},
 }
 
@@ -257,6 +262,11 @@ def canonical(spec: dict) -> dict:
     d = {k: spec.get(k) for k in keep}
     d["filters"] = spec.get("filters") or []
     return d
+
+
+def entry_key(spec: dict) -> str:
+    """Identity of the ENTRY signal (family, params, filters, side) - independent of exits and sizing."""
+    return hashlib.sha1(json.dumps([spec.get("family"), spec.get("params"), spec.get("filters") or [], spec.get("side")], sort_keys=True, default=list).encode()).hexdigest()[:16]
 
 
 def spec_hash(spec: dict) -> str:
@@ -269,6 +279,11 @@ def validate_spec(spec: dict) -> list[str]:
     fam = FAMILIES.get(spec.get("family"))
     if not fam: return [f"unknown family {spec.get('family')}"]
     p = spec.get("params") or {}
+    if spec.get("family") == "gp_rule":
+        from . import grammar
+        errs = grammar.validate_rule(p.get("rule"), p.get("side")) + ([] if spec.get("side") == p.get("side") else ["side mismatch"])
+        if spec.get("stop_atr") is None or spec["stop_atr"] <= 0 or spec.get("max_hold", 0) <= 0: errs.append("bad exits")
+        return errs
     for k, grid in fam["space"].items():
         if k not in p: errs.append(f"missing param {k}")
         elif grid is not None and p[k] not in grid and not (isinstance(p[k], (int, float)) and grid and all(isinstance(g, (int, float)) for g in grid) and min(grid) <= p[k] <= max(grid)):
@@ -282,7 +297,7 @@ def validate_spec(spec: dict) -> list[str]:
         if t not in FILTER_SPACE: errs.append(f"bad filter {t}"); continue
         if t == "ema_trend" and not (isinstance(f.get("n"), int) and 5 <= f["n"] <= 500): errs.append("bad ema n")
         if t == "atr_pct" and not (all(isinstance(f.get(k), (int, float)) for k in ("lo", "hi")) and 0 <= f["lo"] < f["hi"] <= 1.0): errs.append("bad atr_pct range")
-        if t == "htf_trend" and not (f.get("mult") in (2, 3, 4, 6, 8, 12, 16) and isinstance(f.get("n"), int) and 5 <= f["n"] <= 200): errs.append("bad htf_trend")
+        if t == "htf_trend" and not (f.get("mult") in (2, 3, 4, 6, 8, 12, 16, 48, 96, 288) and isinstance(f.get("n"), int) and 5 <= f["n"] <= 200): errs.append("bad htf_trend")
         if t == "er_regime" and not (isinstance(f.get("n"), int) and 5 <= f["n"] <= 200 and f.get("mode") in ("trend", "range") and isinstance(f.get("thr"), (int, float)) and 0 < f["thr"] < 1): errs.append("bad er_regime")
         if t == "session" and not (isinstance(f.get("hours"), list) and f["hours"] and all(isinstance(h, int) and 0 <= h < 24 for h in f["hours"])): errs.append("bad session hours")
     if len(spec.get("filters") or []) > 3: errs.append("too many filters")

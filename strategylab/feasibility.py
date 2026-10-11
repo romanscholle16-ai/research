@@ -103,6 +103,7 @@ FAILURE_CLASS = {
     "excess_ruin_risk_test": "economic_infeasibility", "excess_ruin_risk_all": "economic_infeasibility", "excess_drawdown_test": "economic_infeasibility", "excess_drawdown_all": "economic_infeasibility",
     "no_edge": "no_edge", "statistically_insignificant": "no_edge", "poor_risk_reward": "no_edge", "no_alpha_vs_random_entries": "no_edge", "fails_out_of_sample": "no_edge", "fails_locked_test": "no_edge",
     "unstable_parameters_overfit": "instability", "regime_dependent_or_unstable": "instability", "fails_walk_forward": "instability", "single_regime_dependence": "instability", "depends_on_few_trades": "instability",
+    "cost_infeasible_precheck": "costs", "noise_neighbourhood": "duplicate", "exit_variant_limit": "duplicate",
     "look_ahead_bias": "invalid", "fails_multiple_testing": "multiple_testing", "near_duplicate_failed_hypothesis": "duplicate",
 }
 
@@ -123,3 +124,54 @@ def signal_fingerprint(F, spec, lo, hi, sig=None):
     L, S = sig if sig is not None else ST.signals(F, spec)
     h = hashlib.sha1(); h.update(np.packbits(L[lo:hi]).tobytes()); h.update(b"|"); h.update(np.packbits(S[lo:hi]).tobytes())
     return h.hexdigest()[:16]
+
+
+# ---------------------------------------------------------------- pre-signal checks (no signal computation, no backtest)
+MAX_EXIT_VARIANTS = 3          # at most this many exit variants of one entry hypothesis
+NEIGHBOUR_LIMIT = 3            # this many failed adjacent-grid neighbours => the neighbourhood is noise
+
+
+def precheck_cost(F, spec, bounds, em):
+    """Cost screen using only the timeframe's typical ATR: round-trip cost vs the stop distance this spec would use."""
+    lo, hi = bounds["train"]; af = F.atr_frac_med(lo, hi, spec.get("atr_n", 14))
+    if not (af == af and af > 0): return dict(ok=True, cost_R_est=None)
+    c_rt = round_trip_cost(em); cost_R = c_rt / (spec["stop_atr"] * af)
+    return dict(ok=cost_R <= 0.5 * G_MAX * 1.25, cost_R_est=round(cost_R, 3), stop_frac_est=round(spec["stop_atr"] * af, 5))
+
+
+def hyp_keys(spec, symbol, tf):
+    import hashlib, json
+    ek = ST.entry_key(spec)
+    hk = hashlib.sha1(f"{ek}|{symbol}|{tf}".encode()).hexdigest()[:16]
+    gk = hashlib.sha1(json.dumps([spec["family"], symbol, tf, spec.get("side"), spec.get("filters") or []], sort_keys=True, default=list).encode()).hexdigest()[:16]
+    return ek, hk, gk
+
+
+def _adjacent(a, b, family):
+    fam = ST.FAMILIES.get(family)
+    if not fam or family == "gp_rule": return False
+    diffs = [k for k in a if a.get(k) != b.get(k)]
+    if len(diffs) != 1: return False
+    g = fam["space"].get(diffs[0])
+    return bool(g and a[diffs[0]] in g and b.get(diffs[0]) in g and abs(g.index(a[diffs[0]]) - g.index(b[diffs[0]])) == 1)
+
+
+def novelty_check(db, spec, symbol, tf):
+    """Registry-based novelty test BEFORE any signal/backtest work. Returns (ok, reason)."""
+    import json
+    ek, hk, gk = hyp_keys(spec, symbol, tf)
+    r = db.q("SELECT n_variants FROM hyp_registry WHERE hkey=?", (hk,))
+    if r and r[0]["n_variants"] >= MAX_EXIT_VARIANTS: return False, "exit_variant_limit"
+    if spec["family"] != "gp_rule":
+        rows = db.q("SELECT params_json, n_failed, best_stage FROM hyp_registry WHERE group_key=? AND hkey!=? AND n_failed>=1 AND best_stage<=1", (gk, hk))
+        near = sum(1 for x in rows if _adjacent(spec["params"], json.loads(x["params_json"]), spec["family"]))
+        if near >= NEIGHBOUR_LIMIT: return False, "noise_neighbourhood"
+    return True, None
+
+
+def register(db, spec, symbol, tf, stage, failed):
+    import json, time
+    ek, hk, gk = hyp_keys(spec, symbol, tf); now = time.time()
+    db.x("""INSERT INTO hyp_registry(hkey,entry_key,group_key,family,symbol,timeframe,side,params_json,n_variants,n_failed,best_stage,first_ts,last_ts)
+            VALUES(?,?,?,?,?,?,?,?,1,?,?,?,?) ON CONFLICT(hkey) DO UPDATE SET n_variants=n_variants+1, n_failed=n_failed+?, best_stage=MAX(best_stage,?), last_ts=?""",
+         (hk, ek, gk, spec["family"], symbol, tf, spec.get("side"), json.dumps(spec["params"], sort_keys=True, default=list), int(failed), stage, now, now, int(failed), stage, now))

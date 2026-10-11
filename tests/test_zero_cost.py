@@ -99,8 +99,9 @@ def test_exit_only_variants_of_a_failed_hypothesis_are_not_retested_forever(home
     for rr, hold, stop in [(1.0, 12, 1.5), (1.5, 24, 2.0), (2.0, 48, 3.0), (3.0, 96, 1.0), (0, 24, 2.0), (2.0, 12, 3.0)]:
         out.append(E.run_experiment(db, st, store, dict(spec=dict(base, target_rr=rr, max_hold=hold, stop_atr=stop), symbol="BTCUSDT", timeframe="1h")))
     assert all(o["status"] == "REJECTED" for o in out)                                           # noise data: nothing should pass
-    assert any("near_duplicate_failed_hypothesis" in o["reasons"] for o in out[3:])
-    assert sum("near_duplicate_failed_hypothesis" in o["reasons"] for o in out[:3]) == 0
+    dup = ("near_duplicate_failed_hypothesis", "exit_variant_limit")
+    assert all(any(d in o["reasons"] for d in dup) for o in out[3:])                          # variants 4+ of one entry hypothesis are refused up front
+    assert not any(any(d in o["reasons"] for d in dup) for o in out[:3])                      # the first three exit variants are allowed
 
 
 # 8 --------------------------------------------------------------------------------------------------------------------------------------

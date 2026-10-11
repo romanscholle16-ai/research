@@ -77,6 +77,8 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
 
     def finish(status, reasons):
         summary["reasons"] = reasons; summary["failure_class"] = FE.classify(reasons) if status == "REJECTED" else None
+        stage_ = 4 if "final" in summary else 3 if "validate" in summary else 2 if "screen" in summary else (1 if (status == "REJECTED" and summary.get("failure_class") == "no_edge") else 0)
+        FE.register(db, spec, symbol, tf, stage_, status == "REJECTED")
         if fp_key:                                              # remember how often entries with this signal fingerprint failed
             db.x("INSERT INTO signal_fp(symbol,timeframe,fp,family,n_tested,n_failed) VALUES(?,?,?,?,1,?) ON CONFLICT(symbol,timeframe,fp) DO UPDATE SET n_tested=n_tested+1, n_failed=n_failed+?",
                  (symbol, tf, fp_key, spec["family"], int(status == "REJECTED"), int(status == "REJECTED")))
@@ -89,7 +91,20 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
 
     # ---- Stage A: cheap eligibility + economic feasibility (no backtest, no optimisation)
     stage_cb("A eligibility")
-    sig = ST.signals(F, spec); lo_, hi_ = bounds["train"]
+    pre = {}                                                    # checks that need neither signals nor a backtest
+    pc = FE.precheck_cost(F, spec, bounds, em); pre["cost"] = pc
+    ok_n, why_n = FE.novelty_check(db, spec, symbol, tf)
+    if not pc["ok"] or not ok_n:
+        why = ["cost_infeasible_precheck"] if not pc["ok"] else [why_n]
+        summary["eligibility"] = dict(decision="reject", reasons=why, failure_class=FE.classify(why), **pre, precheck=True)
+        record("eligibility", "fail", summary["eligibility"], why)
+        return finish("REJECTED", why)
+    ek_ = ST.entry_key(spec); cache_ = item["cache"]
+    if ek_ in cache_: sig = cache_[ek_]                          # entry signals are independent of exits: reuse across exit variants
+    else:
+        sig = ST.signals(F, spec); cache_[ek_] = sig
+        while len(cache_) > 48: cache_.pop(next(iter(cache_)))
+    lo_, hi_ = bounds["train"]
     ea = FE.stage_a(F, spec, bounds, em, st, sig); summary["eligibility"] = ea
     fp_key = FE.signal_fingerprint(F, spec, lo_, hi_, sig); ea["signal_fp"] = fp_key
     if ea["decision"] == "pass":

@@ -60,10 +60,11 @@ class Features:
         return self._memo(("bw", n), lambda: (4 * self.std(n) / self.sma(n)))
 
     def pct_rank(self, arr_key, arr, n):
-        """Rolling percentile rank of last value in trailing window n (causal)."""
+        """Rolling percentile rank of the last value within its trailing window (fraction of PREVIOUS values below it). Causal, vectorised."""
         def f():
-            s = pd.Series(arr)
-            return s.rolling(n, min_periods=n // 2).apply(lambda w: (w[:-1] < w[-1]).mean() if len(w) > 1 else np.nan, raw=True).to_numpy()
+            r = pd.Series(arr).rolling(n, min_periods=n // 2)
+            rank = r.rank(method="min"); cnt = r.count()
+            return ((rank - 1) / (cnt - 1).replace(0, np.nan)).to_numpy()
         return self._memo(("pr", arr_key, n), f)
 
     def atr_pct(self, n=14, w=500):
@@ -139,3 +140,17 @@ class Features:
             c = self.s("c"); net = (c - c.shift(n)).abs(); path = c.diff().abs().rolling(n).sum()
             return (net / path.replace(0, np.nan)).to_numpy()
         return self._memo(("er", n), f)
+
+    def taker_imb_z(self, n=1, w=250):
+        """z-score of the n-bar taker imbalance against its trailing w-bar mean/std (CVD proxy)."""
+        def f():
+            imb = pd.Series(self.taker_imb(n)); r = imb.rolling(w, min_periods=w // 2)
+            return ((imb - r.mean()) / r.std()).to_numpy()
+        return self._memo(("imbz", n, w), f)
+
+    def atr_frac_med(self, lo, hi, n=14):
+        """Median ATR/price over [lo,hi): cheap per-timeframe volatility level (needs no signals)."""
+        def f():
+            a = self.atr(n)[lo:hi] / self.c[lo:hi]; a = a[np.isfinite(a)]
+            return float(np.median(a)) if len(a) else float("nan")
+        return self._memo(("atrfm", lo, hi, n), f)
