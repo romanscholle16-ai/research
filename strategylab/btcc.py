@@ -46,7 +46,7 @@ class ExchangeModel:
     def round_trip(self):
         return self.entry_cost() + 0.5 * self.exit_cost(stop=True) + 0.5 * self.exit_cost(stop=False)
 
-    def tradable_stop(self, sfrac, max_cost_R=0.4):
+    def tradable_stop(self, sfrac, max_cost_R=1.5):
         """High-leverage execution rule (known at signal time): the stop must sit inside the liquidation distance at min_lev_capable and
         the round trip must cost <= max_cost_R of the 1R risk, otherwise the trade is skipped. No-op for normal presets."""
         import numpy as np

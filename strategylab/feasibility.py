@@ -19,7 +19,8 @@ from . import strategies as ST
 WEEK = 7 * 86400
 RF_MAX = 0.10          # max risk per trade as a fraction of equity
 LEV_CAP = 50.0         # sizing search never exceeds this
-G_MAX = 0.80           # gross edge per trade (in R) beyond which a rule is not believable
+G_MAX = 0.80
+G_HL = 2.0        # believable gross edge cap (R) in user-directed high-leverage mode (targets of 3-6R)           # gross edge per trade (in R) beyond which a rule is not believable
 MIN_WEEKLY = 1.0       # hard mandatory minimum: completed trades per week on average
 MAX_YEAR_SHARE = 0.60  # one calendar year may not contribute more than this share of the signals (needs >= 3 years)
 
@@ -92,9 +93,10 @@ def stage_a(F, spec, bounds, em, st, sig=None):
         g_need = cost_R + e_req
         out.update(cost_R=round(cost_R, 3), rf_eff=round(rf_eff, 4), leverage_needed=round(lev_needed, 1), required_net_expectancy_R=round(e_req, 3), required_gross_edge_R=round(g_need, 3))
         if getattr(em, 'min_lev_capable', 0) and stop_med > 0.8 * em.liq_distance(em.min_lev_capable): reasons.append("not_leverage_capable")
-        if cost_R > 0.5 * G_MAX: reasons.append("cost_infeasible")                 # costs alone eat > 40% of the believable edge
-        elif g_need > G_MAX and "insufficient_frequency" not in reasons: reasons.append("infeasible_for_target")
-        out["research_only"] = bool("infeasible_for_target" not in reasons and g_need > 0.6 * G_MAX)   # passes, but only just
+        hl = bool(getattr(em, 'min_lev_capable', 0)); g_cap = G_HL if hl else G_MAX; c_cap = 1.5 if hl else 0.5 * G_MAX     # high-leverage mode: wins are multiples of R (rr 3-6), so priors are loosened; backtest gates decide
+        if cost_R > c_cap: reasons.append("cost_infeasible")                 # costs alone eat > 40% of the believable edge
+        elif g_need > g_cap and "insufficient_frequency" not in reasons: reasons.append("infeasible_for_target")
+        out["research_only"] = bool("infeasible_for_target" not in reasons and g_need > 0.6 * g_cap)   # passes, but only just
     elif "insufficient_frequency" not in reasons:
         reasons.append("no_signals")
     cls = classify(reasons)
@@ -146,7 +148,7 @@ def precheck_cost(F, spec, bounds, em):
     sf = spec["stop_atr"] * af
     if getattr(em, "min_lev_capable", 0) and sf > 0.8 * em.liq_distance(em.min_lev_capable):
         return dict(ok=False, reason="not_leverage_capable", cost_R_est=round(cost_R, 3), stop_frac_est=round(sf, 5))     # stop would sit beyond the liquidation price at 250x
-    return dict(ok=cost_R <= 0.5 * G_MAX * 1.25, cost_R_est=round(cost_R, 3), stop_frac_est=round(sf, 5))
+    return dict(ok=cost_R <= (1.5 if getattr(em, 'min_lev_capable', 0) else 0.5 * G_MAX * 1.25), cost_R_est=round(cost_R, 3), stop_frac_est=round(sf, 5))
 
 
 def hyp_keys(spec, symbol, tf):
