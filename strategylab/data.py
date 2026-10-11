@@ -140,9 +140,18 @@ def load_real(symbol, tf, base_tf="1m"):
     """Return (df, meta). df: UTC index; columns OHLCV, taker_buy_volume, funding (rate of the 8h period
     applicable at each bar, only known values - forward filled from the *settled* time)."""
     cdir = data_dir() / symbol
-    srcs = sorted((cdir / "klines").glob(f"{base_tf}-*.csv.gz")) + sorted((cdir / "fundingRate").glob("f-*.csv.gz")) + sorted((cdir / "metrics").glob("m-*.csv.gz"))
-    if not srcs: raise FileNotFoundError(f"no data for {symbol}; run data fetch")
-    sig = f"{len(srcs)}-{int(max(f.stat().st_mtime for f in srcs))}"
+    import os
+    def _stat(d, prefix):          # file count + newest mtime via scandir: no sorting / Path objects (this ran on every cache lookup)
+        n, mt = 0, 0.0
+        try:
+            for e in os.scandir(d):
+                if e.name.startswith(prefix) and e.name.endswith(".csv.gz"):
+                    n += 1; mt = max(mt, e.stat().st_mtime)
+        except FileNotFoundError: pass
+        return n, mt
+    kn, km = _stat(cdir / "klines", f"{base_tf}-"); fn, fm = _stat(cdir / "fundingRate", "f-"); mn, mm = _stat(cdir / "metrics", "m-")
+    if kn + fn == 0: raise FileNotFoundError(f"no data for {symbol}; run data fetch")
+    sig = f"{kn + fn + mn}-{int(max(km, fm, mm))}"
     cache = cdir / f"cache-{tf}-{sig}.pkl"
     if cache.exists():
         return pd.read_pickle(cache)
