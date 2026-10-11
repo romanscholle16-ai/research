@@ -117,3 +117,16 @@ def test_cells_without_gross_edge_are_suppressed(home):
     from strategylab.director import Director
     D_ = Director(db, st, store, None)
     assert ("BTCUSDT", "1h") in D_.dead_cells()
+
+
+def test_surrogate_learns_from_rejects_and_prefers_better_specs(home):
+    st, db, store = setup(home); import json as _j, numpy as _np
+    from strategylab.surrogate import Surrogate
+    rng = _np.random.default_rng(0)
+    for i in range(700):          # synthetic history: wide stops carry edge, tight stops lose to cost
+        stop = float(rng.choice([0.5, 1.0, 3.0, 6.0])); sp = tspec(stop_atr=stop, params=dict(lookback=int(rng.choice([12, 24, 48])), thr_atr=0.5))
+        db.x("INSERT OR IGNORE INTO strategies(id,created,family,spec_json,spec_hash) VALUES(?,?,?,?,?)", (f"S{i}", 0, "tsmom", _j.dumps(sp), f"h{i}"))
+        db.x("INSERT INTO experiments(strategy_id,stage,symbol,timeframe,started,finished,status,metrics_json,synthetic) VALUES(?,?,?,?,0,0,'fail',?,0)",
+             (f"S{i}", "screen", "BTCUSDT", "1h", _j.dumps(dict(mean_R=(0.15 if stop >= 3 else -0.2) + float(rng.normal(0, 0.03)), n=200)),))
+    s = Surrogate(db); assert s.fit() and s.stats["holdout_corr"] > 0.5
+    assert s.score(tspec(stop_atr=6.0), "BTCUSDT", "1h", kappa=0) > s.score(tspec(stop_atr=0.5), "BTCUSDT", "1h", kappa=0)

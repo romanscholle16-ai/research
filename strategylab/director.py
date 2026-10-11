@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy, json, math, time
 import numpy as np
 from . import strategies as ST, feasibility as FE, grammar as G
+from .surrogate import Surrogate
 from .btcc import get_model
 from .agents import Memory, ResearchScientist, StrategyInventor
 
@@ -26,6 +27,11 @@ class Director:
         self._atoms = {}; self._stops = {}
 
     # ------------------------------------------------------------------ evidence
+    @property
+    def sur(self):
+        if not hasattr(self, '_sur'): self._sur = Surrogate(self.db)
+        return self._sur
+
     def dead_cells(self):
         """Self-heal: (symbol, tf) cells whose recent screens show no gross edge are dropped from exploitation/exploration (re-probed ~hourly with fresh data)."""
         now = time.time(); c = self.db.get("dead_cells") or {}
@@ -186,7 +192,8 @@ class Director:
             if "|".join(k) in cool: return -1
             ta = rng.beta(1 + a["screened"], 1 + max(a["n"] - a["screened"], 0)); tv = rng.beta(1 + a["vpass"], 1 + max(a["screened"] - a["vpass"], 0))
             return ta * tv / (a["secs"] + 0.05) + 0.02 * TF_PRIOR.get(k[2], 0)
-        ranked = sorted(arms.items(), key=lambda kv: -draw(*kv)); n_ex, n_ev, n_xp = [round(n * f) for f in SHARES[mode]]
+        ranked = sorted(arms.items(), key=lambda kv: -draw(*kv)); use_sur = self.sur.ready(); over = 3 if use_sur else 1
+        n_ex, n_ev, n_xp = [round(n * over * f) for f in SHARES[mode]]
         jobs, comp, tried = [], dict(exploit=0, evolve=0, explore=0, rejected_precheck=0), 0
         under = sorted([kv for kv in arms.items() if "|".join(kv[0]) not in cool and kv[1]["n"] < 40], key=lambda kv: (kv[1]["n"], rng.random()))
         top = ranked[:max(4, len(ranked) // 8)]
@@ -205,12 +212,19 @@ class Director:
                 comp["rejected_precheck"] += 1
                 reason = "cost_infeasible_precheck" if not pc["ok"] else (why or "duplicate")
                 self.db.x("INSERT INTO precheck_rejections(ts,family,symbol,timeframe,reason,hkey) VALUES(?,?,?,?,?,?)", (time.time(), fam, sy, tf, reason, FE.hyp_keys(spec, sy, tf)[1])); return False
-            jobs.append(dict(spec=spec, symbol=sy, timeframe=tf, note=f"director:{kind}:{how}"[:120], hypothesis_id=self.sci.hypothesis_id(fam), _h=h)); comp[kind] += 1; return True
+            jobs.append(dict(spec=spec, symbol=sy, timeframe=tf, note=f"director:{kind}:{how}"[:120], hypothesis_id=self.sci.hypothesis_id(fam), _h=h,
+                             _sc=self.sur.score(spec, sy, tf) if use_sur else 0.0)); comp[kind] += 1; return True
 
         for kind, quota, pool in (("exploit", n_ex, top), ("evolve", n_ev, top), ("explore", n_xp, under or ranked)):
             guard = 0
             while comp[kind] < quota and guard < quota * 25:
                 guard += 1; arm = pool[int(rng.integers(len(pool)))]; attempt(kind, arm)
+        if use_sur and len(jobs) > n:        # surrogate-guided selection: 80% top predicted net edge (with uncertainty bonus), 20% random for exploration
+            jobs.sort(key=lambda j: -j["_sc"]); keep = jobs[:int(round(n * 0.8))]; rest = jobs[len(keep):]
+            rng.shuffle(rest); keep += rest[:n - len(keep)]
+            for j in keep[:int(round(n * 0.8))]: j["note"] = (j["note"] + ":sur")[:120]
+            comp["surrogate_screened_out"] = len(jobs) - len(keep); jobs = keep
+        for j in jobs: j.pop("_sc", None)
         why = self._explain(mode, s, comp, top, under, cool, tried)
         self.db.x("INSERT INTO director_batches(ts,mode,n,composition_json,reason) VALUES(?,?,?,?,?)", (time.time(), mode, len(jobs), json.dumps(comp), why))
         self.db.set("director_state", s); self.db.set("director_last", dict(mode=mode, reason=why, comp=comp, ts=time.time(), best=s["best"], since_improve=exp - s["exp_last_improve"], since_newhyp=exp - s["exp_last_newhyp"]))
