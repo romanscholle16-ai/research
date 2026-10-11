@@ -85,7 +85,12 @@ def _read_all(symbol, kind, tf):
     pat = f"{tf}-*.csv.gz" if kind == "klines" else "f-*.csv.gz"
     fs = sorted(d.glob(pat)) if d.exists() else []
     if not fs: return None
-    out = pd.concat([_read_one(f, kind) for f in fs], ignore_index=True)
+    parts = []
+    for f in fs:                                   # per-file parse cache: a daily sync only parses the new day files
+        pk = f.with_suffix(".pkl")
+        if pk.exists() and pk.stat().st_mtime >= f.stat().st_mtime: parts.append(pd.read_pickle(pk)); continue
+        part = _read_one(f, kind); part.to_pickle(pk); parts.append(part)
+    out = pd.concat(parts, ignore_index=True)
     out.columns = (COLS[: out.shape[1]] if kind == "klines" else ["calc_time", "funding_interval_hours", "last_funding_rate"][: out.shape[1]])
     return out
 

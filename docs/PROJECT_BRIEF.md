@@ -46,3 +46,18 @@ Findings: only trend/breakout/session-drift style rules on 4h (and some 1h) surv
 
 ## Caveats
 The locked test has been seen by every strategy that reached the final stage, so single-strategy test results are optimistic; portfolios were selected without it. Monte Carlo output is a statistical estimate, not a forecast. BTCC costs are unverified assumptions. The 100-cycle autonomy test used synthetic data and shows engine behaviour, not alpha or 24/7 stability. The research service only runs while the host machine or container is up.
+
+
+---
+## Phase 2 update (2026-10-11): what changed since the first brief
+Verified at the start of phase 2 against the live database: 9,817 strategies / 17,044 experiment rows, 0 BACKTEST_QUALIFIED, one service + one worker (no duplicates). Checkpoint tag: `checkpoint-before-phase2`.
+
+**Implemented and tested (22 unit tests + 3 autonomy tests):**
+- **A. BTCC realism:** `btcc.py` now carries per-parameter provenance and presets (`conservative` default, `listed_vip0`, `adverse`; setting `exchange_preset`). BTCC's own pages conflict on fees (taker 0.045% / 0.048% / up to 0.06%), so the conservative end stays the default. Margin tiers, liquidation rules and ETH minimums were NOT found. See `docs/BTCC.md`.
+- **B. AI research:** prompt now carries a structured memory digest (per-family tested/promising/top failure reasons, blocked ideas, binding constraints); proposals are DATA only, validated by a strict schema (families, grid ranges, filter whitelist and ranges, max 3 filters) before the normal pipeline; each AI hypothesis is stored with provenance; keys are redacted from prompts and logs. **Not exercised with a real Claude call: no `ANTHROPIC_API_KEY` is configured in this environment.**
+- **C. New edges:** higher-timeframe trend filter (completed HTF bars only), efficiency-ratio trend/range regime filter, failed-breakout fade family, 5m timeframe for a higher-frequency test. All checked by the look-ahead test.
+- **D. Statistical audit:** `scripts/null_calibration.py` runs the whole pipeline on block-resampled real bars (a) drift removed, (b) drift kept; robustness gates added (edge must survive removing the top 5% of trades, and must be positive in >=60% of calendar years); the 1,599 then-PROMISING strategies were rechecked from stored trades and 450 were downgraded. Every test-set access is recorded in `experiments` (stage `final`, once per strategy/market/timeframe).
+- **Untouched forward set:** research data is frozen at `research_end` (2026-10-01). Newer days are fetched daily (`data_sync` job) and used only by `forward.py` (>= 8 weeks, >= 10 trades, positive mean R, trades in >= 75% of weeks). Only BACKTEST_QUALIFIED strategies can become PAPER_VALIDATED; PROMISING forward results are informational.
+- **F. Persistence:** progress watchdog (queued work but no job completed for 15 min => restart worker; a heartbeat alone is not progress); incremental parse cache so a daily data sync does not re-parse all history; Windows Task Scheduler logon + 10-minute watchdog entries (`scripts/install_autostart.bat`, **untested on Windows**); dashboard shows seconds since the last completed experiment.
+
+**Still open:** real BTCC margin/liquidation tiers; a real Claude hypothesis run; a long soak test on Windows; replacing Sidak with FDR/deflated-Sharpe; portfolio construction from genuinely new edges.
