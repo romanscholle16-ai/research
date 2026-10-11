@@ -148,6 +148,7 @@ class EvolutionSpecialist:
         for r in rows:
             try: sm = json.loads(r["sj"])
             except Exception: continue
+            if sm.get("portfolio") or r["sy"] == "MULTI": continue      # portfolios are not mutable single specs
             sc = 0.0
             if "validate" in sm: sc += 2
             if "final" in sm: sc += 3

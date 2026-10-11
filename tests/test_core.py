@@ -173,3 +173,17 @@ def test_portfolio_concurrency_scaling_and_combined_trades():
 def test_new_families_have_rationale_and_are_registered():
     for f in ("vwap_reversion", "narrow_range_breakout", "eth_btc_ratio_reversion"):
         assert f in ST.FAMILIES and ST.FAMILIES[f]["falsify"]
+
+
+def test_planning_survives_portfolio_rows_in_memory(home):
+    import json as _j
+    from strategylab import engine as E, agents as A
+    st = Settings(); st.symbols = ["BTCUSDT"]; st.timeframes = ["1h"]; db = DB()
+    store = E.DataStore(st, lambda s, tf: D.synthetic(s, tf, n=5000, seed=3))
+    sup = A.Supervisor(db, st, None, store)
+    for i in range(40):                                   # populate enough history to enable near-miss evolution
+        sup_jobs = sup.plan(4, use_ai=False)
+        for j in sup_jobs: E.run_experiment(db, st, store, j)
+    db.x("INSERT INTO strategies(id,created,family,spec_json,spec_hash) VALUES('P-x',0,'portfolio',?,'P-x')", (_j.dumps({"components": []}),))
+    db.x("INSERT INTO strategy_status VALUES('P-x','MULTI','mix','PROMISING',0,?,0)", (_j.dumps({"portfolio": True, "final": {}, "validate": {}, "screen": {"n": 99, "mean_R": .3, "t": 3}}),))
+    assert sup.plan(4, use_ai=False) is not None
