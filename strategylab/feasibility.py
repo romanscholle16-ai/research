@@ -107,7 +107,7 @@ def stage_a(F, spec, bounds, em, st, sig=None):
 FAILURE_CLASS = {
     "insufficient_frequency": "frequency", "frequency_single_period": "frequency", "inadequate_trade_frequency": "frequency", "too_few_trades": "frequency",
     "too_few_trades_val": "frequency", "too_few_trades_test": "frequency", "no_signals": "frequency",
-    "cost_infeasible": "costs", "cost_dominated": "costs", "cost_sensitive": "costs",
+    "cost_infeasible": "costs", "cost_dominated": "costs", "cost_sensitive": "costs", "fill_or_stop_fragile": "costs",
     "infeasible_for_target": "economic_infeasibility", "cannot_reach_target_test": "economic_infeasibility", "cannot_reach_target_all": "economic_infeasibility",
     "excess_ruin_risk_test": "economic_infeasibility", "excess_ruin_risk_all": "economic_infeasibility", "excess_drawdown_test": "economic_infeasibility", "excess_drawdown_all": "economic_infeasibility",
     "no_edge": "no_edge", "statistically_insignificant": "no_edge", "poor_risk_reward": "no_edge", "no_alpha_vs_random_entries": "no_edge", "fails_out_of_sample": "no_edge", "fails_locked_test": "no_edge",

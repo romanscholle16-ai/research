@@ -140,6 +140,10 @@ def validate(F, spec, bounds, em, st, tr_train, rng):
     c15 = run(F, spec, em.with_cost_mult(1.5), tlo, vhi); out["cost_1.5x"] = float(c15.R.mean()) if len(c15) else 0.0
     c2 = run(F, spec, em.with_cost_mult(2.0), tlo, vhi); out["cost_2x"] = float(c2.R.mean()) if len(c2) else 0.0
     if out["cost_1.5x"] <= 0: reasons.append("cost_sensitive")
+    if em.limit_bars:       # passive-fill models: edge must survive a 4x queue-position haircut and doubled stop slippage (a stop that fills late near liquidation)
+        from dataclasses import replace as _rep
+        fs = run(F, spec, _rep(em, fill_pen=em.fill_pen * 4, stop_slippage=em.stop_slippage * 2), tlo, vhi); out["fill_stress"] = float(fs.R.mean()) if len(fs) else 0.0
+        if out["fill_stress"] <= 0: reasons.append("fill_or_stop_fragile")
     la = lookahead_test(F.df, spec, ref=F.ref); out["lookahead"] = la
     if not la["passed"]: reasons.append("look_ahead_bias")
     if not reasons:

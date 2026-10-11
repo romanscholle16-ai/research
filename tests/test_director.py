@@ -277,3 +277,41 @@ def test_data_audit_detects_corruption():
     bad = df.copy(); bad.iloc[100, bad.columns.get_loc("high")] = bad.iloc[100]["low"] * 0.5
     bad.iloc[200:260, bad.columns.get_loc("high")] = 1e-3          # many inconsistent bars
     assert DA.audit_frame(bad, "15m")["status"] == "quarantined"
+
+
+def test_director_state_survives_null_or_partial_kv(tmp_path):
+    from strategylab.db import DB
+    from strategylab.director import Director
+    d = DB(tmp_path / "t.db"); dr = Director.__new__(Director); dr.db = d
+    d.set("director_state", None); assert dr._state()["mode"] == "normal"
+    d.set("director_state", {"mode": "stagnation"}); s = dr._state(); assert s["mode"] == "stagnation" and s["hyp_prev"] == 0 and s["cooldown"] == {}
+
+
+def test_accounting_separates_margin_return_from_account_profit():
+    import numpy as np
+    from strategylab import capital as CP, btcc
+    from strategylab.backtest import Trades
+    em = btcc.get_model("user_500x_maker")
+    # one BTC trade: price +0.8% (entry 100000), 500x => +400% on the margin; margin $25 => ~$100 profit, NOT $1,200 on a $300 account
+    tr = Trades(t_in=[1.7e9], t_out=[1.7e9 + 600], dir=[1], entry=[100000.0], ret=[0.008], fee=[0.0], fund=[0.0], stop_frac=[0.0008], mae=[0.0002], adv_exit=[0.0], reason=[1], bars=[2], scale=[1])
+    # size exactly $25 margin at 500x => notional $12,500 => qty 0.125 BTC: risk_frac so that risk/(sf+fee_buf)*eq = 12500
+    rf = 12500 * (0.0008 + 2 * em.taker_fee) / 300.0
+    lg = CP.ledger(tr, "BTCUSDT", rf, 500, em, start=300.0)
+    t = lg["trades"][0]
+    assert abs(t["margin"] - 25.0) < 0.5 and abs(t["margin_return"] - 4.0) < 0.05 and abs(t["pnl"] - 100.0) < 2.0
+    assert abs(t["account_return"] - t["pnl"] / 300.0) < 1e-9 and t["account_return"] < 0.40          # +33% of the account, not +400%
+    assert abs(lg["final_equity"] + lg["withdrawn_total"] - 300.0 - t["pnl"]) < 1e-6
+    assert lg["withdrawn_total"] <= 0.5 * t["pnl"] + 1e-9                                              # >=50% of the month's profit is retained
+
+
+def test_ledger_matches_vectorised_simulator():
+    import numpy as np
+    from strategylab import capital as CP, btcc
+    from strategylab.backtest import Trades
+    em = btcc.get_model("conservative"); rng = np.random.default_rng(5); n = 60
+    t_out = 1.7e9 + np.sort(rng.uniform(0, 5 * 30 * 86400, n)); net = rng.normal(0.0004, 0.004, n)
+    tr = Trades(t_in=t_out - 3600, t_out=t_out, dir=np.ones(n), entry=np.full(n, 60000.0), ret=net, fee=np.zeros(n), fund=np.zeros(n), stop_frac=np.full(n, 0.01), mae=np.abs(rng.normal(0.004, 0.003, n)), adv_exit=np.zeros(n), reason=np.zeros(n), bars=np.ones(n), scale=np.ones(n))
+    lg = CP.ledger(tr, "BTCUSDT", 0.05, 20, em, start=300.0, wd_target=1e9)
+    blocks = CP.month_blocks(tr, t_out[0], t_out[-1] + 1); idx = np.arange(len(blocks))[None, :]
+    sim = CP.simulate(blocks, idx, "BTCUSDT", 0.05, 20, em, start=300.0, wd_target=1e9)
+    assert abs((lg["final_equity"] + lg["withdrawn_total"]) - float(sim["wealth"][0])) < 1e-6 * max(1, float(sim["wealth"][0])) + 1e-6

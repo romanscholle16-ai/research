@@ -76,7 +76,11 @@ class Director:
         return n >= 10 and bad / n > 0.35
 
     # ------------------------------------------------------------------ stagnation
-    def _state(self): return self.db.get("director_state", dict(mode="normal", direction=0, exp_last_improve=0, best=0.0, hyp_prev=0, exp_last_newhyp=0, mode_since=0, cooldown={}, scan_ts=0.0))
+    def _state(self):
+        d = dict(mode="normal", direction=0, exp_last_improve=0, best=0.0, hyp_prev=0, exp_last_newhyp=0, mode_since=0, cooldown={}, scan_ts=0.0)
+        got = self.db.get("director_state")
+        if isinstance(got, dict): d.update(got)           # a null/partial stored state (epoch reset, schema drift) falls back to defaults instead of crashing the planner
+        return d
 
     def _update_progress(self, s):
         exp = self.db.q("SELECT COUNT(*) n FROM experiments")[0]["n"]; hyp = self.db.q("SELECT COUNT(*) n FROM hyp_registry")[0]["n"]

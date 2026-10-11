@@ -89,6 +89,45 @@ def simulate(blocks, idx, symbol, risk_frac, leverage, em: ExchangeModel = DEFAU
     return dict(final_eq=eq, wd_total=wd_total, wealth=eq + wd_total, minw=minw, peakw=peakw, cap=cap, eqm=eqm, liqs=liqs, ntr=ntr)
 
 
+def ledger(tr: Trades, symbol, risk_frac, leverage, em: ExchangeModel = DEFAULT, margin="isolated", start=300.0, retain=0.5, wd_target=1000.0, t0=None, t1=None):
+    """Independent, scalar, chronological account ledger (one path = the realised trade sequence). Keeps the five quantities apart, per trade:
+       underlying move  -> `ret` (price return of the position, per unit notional, net of fees/funding = `net`)
+       margin return    -> net * leverage_used   (return on the margin locked in the position; can be +400%)
+       dollar P&L       -> notional * net        (what actually changes the balance)
+       account return   -> dollar P&L / equity before the trade
+       withdrawable     -> (1-retain) x positive monthly profit, capped at wd_target, taken at month end.
+    Same sizing, rounding, liquidation and withdrawal rules as `simulate`; used to audit it."""
+    import datetime as dt
+    rows, eq, wd_total = [], start, 0.0
+    step = {"BTCUSDT": 0.001, "ETHUSDT": 0.01}.get(symbol, 0.01); minq = em.minq(symbol); fee_buf = 2 * em.taker_fee
+    order = np.argsort(tr.t_out) if len(tr) else []
+    mkey = lambda t: (lambda d: d.year * 12 + d.month - 1)(dt.datetime.fromtimestamp(t, dt.timezone.utc))
+    cur, eq_m0, months = None, eq, []
+    for i in order:
+        k = mkey(tr.t_out[i])
+        if cur is None: cur = k
+        while k > cur:                                   # month boundary: withdraw (1-retain) of the positive profit, capped
+            profit = eq - eq_m0; w = min((1 - retain) * profit, wd_target) if profit > 0 else 0.0
+            eq -= w; wd_total += w; months.append(dict(month=cur, profit=profit, withdrawn=w, equity=eq)); cur += 1; eq_m0 = eq
+        sf, net, mae, px, sc = tr.stop_frac[i], tr.net[i], tr.mae[i], tr.entry[i], (tr.scale[i] if tr.scale[i] > 0 else 1.0)
+        notional = min(risk_frac * sc * eq / (sf + fee_buf), leverage * eq * 0.95)
+        qty = np.floor(notional / px / step) * step
+        maxn = leverage * eq * 0.95
+        if qty < minq and maxn / px >= minq: qty = minq
+        if qty < minq or qty * px > maxn + 1e-9 or eq <= RUIN_FLOOR: continue
+        notional = qty * px; marg = min(notional / leverage, eq)
+        liq_d = (1.0 / leverage - em.maint_margin_rate) if margin == "isolated" else (eq / max(notional, 1e-9) - em.maint_margin_rate)
+        liquidated = mae >= liq_d
+        pnl = -marg if liquidated else notional * net
+        rows.append(dict(t=float(tr.t_out[i]), equity_before=eq, notional=notional, margin=marg, price_move=float(tr.ret[i]), net_price_return=float(net),
+                         margin_return=pnl / marg if marg > 0 else 0.0, pnl=pnl, account_return=pnl / eq if eq > 0 else 0.0, liquidated=bool(liquidated)))
+        eq = max(eq + pnl, 0.0)
+    if cur is not None:
+        profit = eq - eq_m0; w = min((1 - retain) * profit, wd_target) if profit > 0 else 0.0
+        eq -= w; wd_total += w; months.append(dict(month=cur, profit=profit, withdrawn=w, equity=eq))
+    return dict(trades=rows, months=months, final_equity=eq, withdrawn_total=wd_total)
+
+
 def summarize(sim, start=300.0, wd_target=1000.0):
     P, T = sim["cap"].shape
     def prob(mask):
@@ -124,6 +163,14 @@ def evaluate(tr: Trades, t0, t1, symbol, risk_frac, leverage, em=DEFAULT, margin
         res["historical_windows"] = dict(n=len(w), reach_withdraw_1000=hs["monthly_withdraw_any"]["1000"]["p"],
                                           ruin=hs["ruin"]["p"], median_final_wealth=hs["final_wealth_pct"]["50"], median_equity_band=hs["equity_band"]["50"])
     res["sizing"] = dict(risk_frac=risk_frac, leverage=leverage, margin=margin)
+    lg = ledger(tr, symbol, risk_frac, leverage, em, margin, start, retain, wd_target)["trades"]       # audit view: underlying move vs margin return vs dollars vs account %
+    if lg:
+        w = [x for x in lg if x["pnl"] > 0]
+        res["accounting"] = dict(trades=len(lg), median_margin_frac_of_equity=float(np.median([x["margin"] / x["equity_before"] for x in lg])),
+                                 median_price_move_win=float(np.median([x["price_move"] for x in w])) if w else None,
+                                 median_margin_return_win=float(np.median([x["margin_return"] for x in w])) if w else None,
+                                 median_dollar_win=float(np.median([x["pnl"] for x in w])) if w else None,
+                                 median_account_return_per_trade=float(np.median([x["account_return"] for x in lg])), liquidations=int(sum(x["liquidated"] for x in lg)))
     res["assumption"] = ("Month-block bootstrap of realised trade P&L; assumes future trade distribution equals sampled history. "
                          "Not a forecast. Costs/slippage per ExchangeModel (unverified vs BTCC).")
     return res
