@@ -78,14 +78,14 @@ class Service:
         if ctl == "running":
             for i in range(n):
                 if i not in self.procs and now >= self.next_at.get(i, 0):
-                    db.reclaim_all_running(worker=i); self.start_worker(i)
+                    db.reclaim_all_running(worker=i); db.set(db.wkey("current_job", i), None); self.start_worker(i)
             for i in [j for j in self.procs if j >= n]: self.kill_worker("scaled down", i)
             for i in list(self.procs):
                 hb = db.get(db.wkey("worker_heartbeat", i), now)
                 if now - hb > st.watchdog_stall_s and now - self.started_at.get(i, 0) > st.watchdog_stall_s:
                     self.kill_worker("stalled (no heartbeat)", i); self.crashes.append(now); db.reclaim_all_running(worker=i)
                 cj = db.get(db.wkey("current_job", i))
-                if cj and now - cj["since"] > st.job_timeout_s:
+                if cj and now - cj["since"] > st.job_timeout_s and db.q("SELECT 1 FROM jobs WHERE id=? AND status='running' AND worker=?", (cj["id"], i)):      # a stale marker left by a previous process (container sleep/restart) is not a hung job
                     db.log("error", "service", f"job {cj['id']} exceeded timeout {st.job_timeout_s}s"); self.kill_worker("job timeout", i)
                     db.reclaim_all_running(worker=i)
             if self.procs and self.progress_stalled():
