@@ -153,3 +153,17 @@ def test_plan_batch_skips_saturated_arms_and_stays_fast(home):
     D_ = Director(db, st, store, None)
     t0 = _t.time(); jobs = D_.plan_batch(12, seed=3); assert len(jobs) > 0 and _t.time() - t0 < 60
     assert "arms_exhausted" in db.get("director_last")["comp"]
+
+
+def test_surrogate_validation_head_prefers_out_of_sample_winners(home):
+    st, db, store = setup(home); import json as _j, numpy as _np
+    from strategylab.surrogate import Surrogate
+    rng = _np.random.default_rng(1)
+    for i in range(500):      # train-period edge identical, but only wide stops hold up in the validation period
+        stop = float(rng.choice([1.0, 6.0])); sp = tspec(stop_atr=stop, params=dict(lookback=int(rng.choice([12, 24, 48])), thr_atr=0.5))
+        db.x("INSERT OR IGNORE INTO strategies(id,created,family,spec_json,spec_hash) VALUES(?,?,?,?,?)", (f"V{i}", 0, "tsmom", _j.dumps(sp), f"vh{i}"))
+        for stg, key, r_ in (("screen", "mean_R", 0.1), ("validate", "val", (0.12 if stop >= 6 else -0.15))):
+            m = dict(mean_R=r_, n=200) if stg == "screen" else {"val": dict(mean_R=r_ + float(rng.normal(0, .02)), n=200)}
+            db.x("INSERT INTO experiments(strategy_id,stage,symbol,timeframe,started,finished,status,metrics_json,synthetic) VALUES(?,?,?,?,0,0,'pass',?,0)", (f"V{i}", stg, "BTCUSDT", "1h", _j.dumps(m)))
+    s = Surrogate(db); assert s.fit() and s.wv is not None
+    assert s.score(tspec(stop_atr=6.0), "BTCUSDT", "1h", kappa=0) > s.score(tspec(stop_atr=1.0), "BTCUSDT", "1h", kappa=0)

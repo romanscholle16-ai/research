@@ -29,7 +29,7 @@ def feats(spec, sy, tf):
 
 class Surrogate:
     def __init__(self, db, ttl=900):
-        self.db, self.ttl, self.t = db, ttl, 0.0; self.idx = {}; self.w = None; self.Ainv = None; self.stats = {}
+        self.db, self.ttl, self.t = db, ttl, 0.0; self.idx = {}; self.w = None; self.Ainv = None; self.stats = {}; self.wv = None
 
     def _vec(self, fl):
         x = np.zeros(len(self.idx)); 
@@ -68,9 +68,25 @@ class Surrogate:
         self.stats = dict(n=len(data), holdout_corr=round(corr, 3), top_decile_mean_R=round(float(act[top].mean()), 4), all_mean_R=round(float(act.mean()), 4),
                           top_decile_hit=round(float((act[top] > 0.05).mean()), 3), base_hit=round(float((act > 0.05).mean()), 3), features=len(self.idx), ts=time.time())
         self.w, A = solve(X.astype(np.float64), y, wt); self.Ainv = np.linalg.inv(A); self.t = time.time()
+        self._fit_val(limit, solve)
         try: self.db.set("surrogate_stats", self.stats)
         except Exception: pass
         return True
+
+    def _fit_val(self, limit, solve):
+        """Second head: predicts the VALIDATION-period net edge (data the screen never saw) of specs that reached validation -- targets the dev->out-of-sample decay directly.
+        Uses development data only (train/validation periods); the locked test is never read."""
+        rows = self.db.q("""SELECT s.spec_json sj, e.symbol sy, e.timeframe tf, e.metrics_json m FROM experiments e JOIN strategies s ON s.id=e.strategy_id
+                            WHERE e.stage='validate' AND e.synthetic=0 AND e.timeframe!='4h' ORDER BY e.id DESC LIMIT ?""", (limit,))
+        X, y, wt = [], [], []
+        for r in rows:
+            try:
+                v = (json.loads(r["m"]).get("val") or {}); n = v.get("n", 0)
+                if v.get("mean_R") is None or n < 20: continue
+                X.append(self._vec(feats(json.loads(r["sj"]), r["sy"], r["tf"]))); y.append(float(np.clip(v["mean_R"], -0.5, 0.5))); wt.append(min(n, 200) / 200.0)
+            except Exception: continue
+        if len(X) < 200: self.wv = None; return
+        self.wv, _ = solve(np.array(X), np.array(y), np.array(wt)); self.stats["val_head_n"] = len(X)
 
     def ready(self):
         if self.w is None or time.time() - self.t > self.ttl:
@@ -81,5 +97,7 @@ class Surrogate:
     def score(self, spec, sy, tf, kappa=0.6):
         """Optimistic predicted net R/trade (mean + kappa*sd)."""
         if not self.ready(): return 0.0
-        x = self._vec(feats(spec, sy, tf)); mu = float(x @ self.w); sd = float(np.sqrt(max(x @ self.Ainv @ x, 0))) * 0.15
+        x = self._vec(feats(spec, sy, tf)); mu = float(x @ self.w)
+        if self.wv is not None: mu = 0.4 * mu + 0.6 * float(x @ self.wv)      # weight the out-of-sample head more: it sees what survives beyond the training window
+        sd = float(np.sqrt(max(x @ self.Ainv @ x, 0))) * 0.15
         return mu + kappa * sd
