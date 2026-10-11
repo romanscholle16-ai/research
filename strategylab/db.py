@@ -81,13 +81,14 @@ class DB:
                      (kind, json.dumps(payload or {}), priority, not_before, time.time()))
         return cur.lastrowid
 
-    def claim_job(self, kinds=None):
+    def claim_job(self, kinds=None, exclude=()):
         """Atomically claim the highest-priority runnable job."""
         c = self.conn()
         c.execute("BEGIN IMMEDIATE")
         try:
             now = time.time()
-            r = c.execute("SELECT * FROM jobs WHERE status='queued' AND not_before<=? ORDER BY priority, id LIMIT 1", (now,)).fetchone()
+            ex = "".join(f" AND kind!='{k}'" for k in exclude if k.isalpha())
+            r = c.execute(f"SELECT * FROM jobs WHERE status='queued' AND not_before<=?{ex} ORDER BY priority, id LIMIT 1", (now,)).fetchone()
             if not r:
                 c.execute("COMMIT"); return None
             c.execute("UPDATE jobs SET status='running', started=?, heartbeat=?, attempts=attempts+1 WHERE id=?", (now, now, r["id"]))

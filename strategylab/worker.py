@@ -59,12 +59,12 @@ def main():
         if resources.free_mem_mb() < 800:
             db.set("blocker", "low_system_memory"); time.sleep(10); continue
         try:
-            job = db.claim_job()
+            pending = db.q("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]["n"]
+            if pending == 0: db.enqueue("plan", {"n": 8}, priority=1)       # exploration never starves behind maintenance jobs
+            loop_n = db.get("loop_n", 0) + 1; db.set("loop_n", loop_n)
+            job = db.claim_job(exclude=("recheck",) if loop_n % 3 else ())  # rechecks get 1/3 of the slots
             if job is None:
-                pending = db.q("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]["n"]
-                if pending == 0: db.enqueue("plan", {"n": 8}, priority=1)
-                else: time.sleep(st.idle_sleep_s)
-                continue
+                time.sleep(st.idle_sleep_s); continue
             db.heartbeat(job["id"]); db.set("current_job", {"id": job["id"], "kind": job["kind"], "since": time.time(),
                                                            "note": job["payload"].get("note", ""), "symbol": job["payload"].get("symbol"),
                                                            "timeframe": job["payload"].get("timeframe")})
