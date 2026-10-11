@@ -24,7 +24,7 @@ class DataStore:
         cut = pd.Timestamp(self.st.research_end, tz="UTC") if getattr(self.st, "research_end", None) else None
         if cut is not None and not meta.get("synthetic"): df = df[df.index < cut]
         ref = None
-        other = "ETHUSDT" if symbol == "BTCUSDT" else "BTCUSDT" if symbol == "ETHUSDT" else None
+        other = "ETHUSDT" if symbol == "BTCUSDT" else "BTCUSDT"      # BTC is the reference market for every other symbol (BTC itself uses ETH)
         if other and other in self.st.symbols:
             try:
                 ref = self.loader(other, tf)[0]

@@ -54,6 +54,8 @@ class Director:
         secs = self._secs_per_hypothesis()
         for fam in ST.FAMILIES:
             for (sy, tf) in cells:
+                it = self.store.get(sy, tf); req = ST.FAMILIES[fam]["requires"]
+                if ("ref" in req and it["F"].ref is None) or ("funding" in req and not it["meta"].get("has_funding")): continue      # engine would skip these jobs: never plan them
                 r = reg.get((fam, sy, tf), dict(n=0, screened=0, vpass=0, variants=0))
                 out[(fam, sy, tf)] = dict(n=r["n"], screened=r["screened"] or 0, vpass=r["vpass"] or 0, secs=secs.get((fam, tf), 0.3))
         return out
@@ -198,7 +200,7 @@ class Director:
         under = sorted([kv for kv in arms.items() if "|".join(kv[0]) not in cool and kv[1]["n"] < 40], key=lambda kv: (kv[1]["n"], rng.random()))
         top = ranked[:max(4, len(ranked) // 8)]
 
-        def attempt(kind, arm):
+        def _attempt(kind, arm):
             nonlocal tried
             tried += 1; fam, sy, tf = arm[0]
             regime = self.regime_hint(fam, sy, tf) if kind != "explore" else False
@@ -215,10 +217,21 @@ class Director:
             jobs.append(dict(spec=spec, symbol=sy, timeframe=tf, note=f"director:{kind}:{how}"[:120], hypothesis_id=self.sci.hypothesis_id(fam), _h=h,
                              _sc=self.sur.score(spec, sy, tf) if use_sur else 0.0)); comp[kind] += 1; return True
 
+        succ, fails = {}, {}
+        def attempt(kind, arm):
+            ok = _attempt(kind, arm); k = "|".join(arm[0]); (succ if ok else fails)[k] = (succ if ok else fails).get(k, 0) + 1; return ok
+        now = time.time(); exh = {k for k, until in (s.get("exhausted") or {}).items() if until > now}      # arms whose space is saturated (recent batches produced only duplicates/infeasible)
+        live = lambda pool: [kv for kv in pool if "|".join(kv[0]) not in exh] or pool
+        top, under, ranked = live(top), live(under), live(ranked)
         for kind, quota, pool in (("exploit", n_ex, top), ("evolve", n_ev, top), ("explore", n_xp, under or ranked)):
             guard = 0
             while comp[kind] < quota and guard < quota * 25:
-                guard += 1; arm = pool[int(rng.integers(len(pool)))]; attempt(kind, arm)
+                guard += 1; arm = pool[int(rng.integers(len(pool)))]; k_ = "|".join(arm[0])
+                if fails.get(k_, 0) >= 8 and not succ.get(k_): continue          # saturated within this batch
+                attempt(kind, arm)
+        ex_new = {k: now + 1800 for k, f in fails.items() if f >= 8 and succ.get(k, 0) == 0}
+        s["exhausted"] = {**{k: u for k, u in (s.get("exhausted") or {}).items() if u > now}, **ex_new}
+        comp["arms_exhausted"] = len(s["exhausted"])
         if use_sur and len(jobs) > n:        # surrogate-guided selection: 80% top predicted net edge (with uncertainty bonus), 20% random for exploration
             jobs.sort(key=lambda j: -j["_sc"]); keep = jobs[:int(round(n * 0.8))]; rest = jobs[len(keep):]
             rng.shuffle(rest); keep += rest[:n - len(keep)]

@@ -144,3 +144,12 @@ def test_positioning_atoms_are_causal_and_gated():
     assert (full[:2000] == cut).all()                                  # no look-ahead: prefix of full == computation on truncated data
     nan_df = df.drop(columns=["oi"]); assert not _G.atom_array(Features(nan_df), "oichg6_gt", 1.0).any()   # missing data => never fires
     assert not _G.available("oichg6_gt", has_oi=False) and _G.available("oichg6_gt", has_oi=True)
+
+
+def test_plan_batch_skips_saturated_arms_and_stays_fast(home):
+    import time as _t
+    st, db, store = setup(home); st.symbols = ["BTCUSDT"]; st.timeframes = ["1h"]
+    from strategylab.director import Director
+    D_ = Director(db, st, store, None)
+    t0 = _t.time(); jobs = D_.plan_batch(12, seed=3); assert len(jobs) > 0 and _t.time() - t0 < 60
+    assert "arms_exhausted" in db.get("director_last")["comp"]
