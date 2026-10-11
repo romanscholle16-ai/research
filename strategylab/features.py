@@ -123,3 +123,19 @@ class Features:
             r = pd.Series(np.log(self.c / rc))
             return ((r - r.rolling(n).mean()) / r.rolling(n).std()).to_numpy()
         return self._memo(("ratioz", n), f)
+
+    def htf_ema(self, mult, n):
+        """EMA of the close of COMPLETED higher-timeframe bars (mult x current bar), forward-filled; never uses the forming HTF bar."""
+        def f():
+            step = int(np.median(np.diff(self.epoch_s[:2000]))) * mult
+            g = pd.Series(self.c).groupby(self.epoch_s // step)
+            last = g.last(); ema = last.ewm(span=n, adjust=False, min_periods=n).mean().shift(1)   # shift: only completed HTF bars
+            return ema.reindex(self.epoch_s // step).to_numpy()
+        return self._memo(("htf", mult, n), f)
+
+    def efficiency_ratio(self, n):
+        """Kaufman efficiency ratio in [0,1]: |net move| / sum|moves|. High = trending, low = choppy."""
+        def f():
+            c = self.s("c"); net = (c - c.shift(n)).abs(); path = c.diff().abs().rolling(n).sum()
+            return (net / path.replace(0, np.nan)).to_numpy()
+        return self._memo(("er", n), f)

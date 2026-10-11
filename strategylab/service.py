@@ -16,7 +16,7 @@ WORKER_CMD = [sys.executable, "-m", "strategylab.worker"]
 class Service:
     def __init__(self):
         self.db = DB(); self.st = Settings.load(); self.proc = None; self.crashes = []; self.running = True
-        self.lock = home_dir() / "service.pid"; self.next_start = 0.0
+        self.lock = home_dir() / "service.pid"; self.next_start = 0.0; self.worker_started_at = 0.0
 
     def acquire(self):
         if self.lock.exists():
@@ -28,6 +28,7 @@ class Service:
 
     def start_worker(self):
         env = dict(os.environ)
+        self.worker_started_at = time.time()
         self.proc = subprocess.Popen(WORKER_CMD, env=env, cwd=str(Path(__file__).resolve().parent.parent))
         self.db.log("info", "service", f"worker started pid={self.proc.pid}")
 
@@ -38,6 +39,14 @@ class Service:
             try: self.proc.wait(10)
             except subprocess.TimeoutExpired: self.proc.kill(); self.proc.wait()
         self.proc = None
+
+    def progress_stalled(self, now=None):
+        """True when jobs are queued/runnable but none has COMPLETED for progress_stall_s (a heartbeat alone is not progress)."""
+        now = now or time.time(); db = self.db
+        last = db.q("SELECT COALESCE(MAX(finished),0) m FROM jobs WHERE status='done'")[0]["m"]
+        runnable = db.q("SELECT COUNT(*) n FROM jobs WHERE status='queued' AND not_before<=?", (now,))[0]["n"]
+        started = max(self.worker_started_at, last)
+        return runnable > 0 and now - started > self.st.progress_stall_s and now - last > self.st.progress_stall_s
 
     def tick(self):
         db, st = self.db, self.st
@@ -62,6 +71,9 @@ class Service:
                 hb = db.get("worker_heartbeat", time.time())
                 if time.time() - hb > st.watchdog_stall_s:
                     self.kill_worker("stalled (no heartbeat)"); self.crashes.append(time.time()); db.reclaim_all_running()
+                if self.progress_stalled():
+                    db.log("error", "service", f"no job completed for {st.progress_stall_s}s despite queued work; restarting worker")
+                    self.kill_worker("progress stall"); self.crashes.append(time.time()); db.reclaim_all_running(); return
                 n = db.reclaim_stalled(st.watchdog_stall_s)
                 if n: db.log("warn", "service", f"reclaimed {n} stalled job(s)")
                 cj = db.get("current_job")

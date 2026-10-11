@@ -187,3 +187,81 @@ def test_planning_survives_portfolio_rows_in_memory(home):
     db.x("INSERT INTO strategies(id,created,family,spec_json,spec_hash) VALUES('P-x',0,'portfolio',?,'P-x')", (_j.dumps({"components": []}),))
     db.x("INSERT INTO strategy_status VALUES('P-x','MULTI','mix','PROMISING',0,?,0)", (_j.dumps({"portfolio": True, "final": {}, "validate": {}, "screen": {"n": 99, "mean_R": .3, "t": 3}}),))
     assert sup.plan(4, use_ai=False) is not None
+
+
+def test_progress_watchdog_flags_heartbeat_without_completions(home):
+    from strategylab.service import Service
+    st = Settings(); st.progress_stall_s = 60; st.save()
+    svc = Service(); now = time.time()
+    db = svc.db; db.enqueue("experiment", {"x": 1})
+    svc.worker_started_at = now - 1000
+    assert svc.progress_stalled(now)                                  # queued work, nothing completed for >60s
+    j = db.claim_job(); db.finish_job(j["id"]); db.enqueue("experiment", {"x": 2})
+    assert not svc.progress_stalled(time.time())                      # a job just completed => healthy
+    assert not svc.progress_stalled(time.time() + 30)
+
+
+def test_robustness_gate_detects_few_trade_and_single_year_dependence():
+    from strategylab.validation import robustness
+    n = 100; t = np.linspace(1.6e9, 1.6e9 + 3 * 365 * 86400, n)
+    R = np.full(n, -0.1); R[:3] = 20.0                                # three huge winners carry a losing system
+    mk = lambda R: B.Trades(t_in=t, t_out=t + 3600, dir=[1] * n, entry=[1] * n, ret=R * 0.01, fee=[0] * n, fund=[0] * n, stop_frac=[0.01] * n, mae=[0] * n, adv_exit=[0] * n, reason=[1] * n, bars=[1] * n)
+    _, r = robustness(mk(R)); assert "depends_on_few_trades" in r
+    steady = np.tile([0.2, 0.1, 0.15, 0.3], n // 4); _, r = robustness(mk(steady)); assert r == []
+
+
+def test_research_data_is_frozen_at_cutoff_and_forward_uses_only_later_bars(home):
+    from strategylab import engine as E, forward as FW
+    st = Settings(); st.symbols = ["BTCUSDT"]; st.timeframes = ["1h"]; db = DB()
+    df, meta = D.synthetic("BTCUSDT", "1h", n=20000, seed=4)
+    st.research_end = str(df.index[15000])[:10]                       # freeze research mid-way
+    meta = dict(meta, synthetic=0)                                    # treat as real so the cutoff applies
+    store = E.DataStore(st, lambda s, tf: (df, meta))
+    item = store.get("BTCUSDT", "1h")
+    assert item["df"].index[-1] < pd_ts(st.research_end) <= item["df_full"].index[-1]
+    assert len(item["df"]) < len(item["df_full"])
+    spec = dict(family="tsmom", params=dict(lookback=24, thr_atr=0.5), side="both", stop_atr=2, target_rr=2, max_hold=48, atr_n=14, filters=[])
+    r = E.run_experiment(db, st, store, dict(spec=spec, symbol="BTCUSDT", timeframe="1h"))
+    sid, = [r["strategy_id"]]
+    out = FW.evaluate_forward(db, st, store, sid, "BTCUSDT", "1h")
+    assert out["weeks"] > 8 and out["verdict"] in ("pass", "fail", "insufficient_data") and out["cutoff"].startswith(st.research_end)
+    assert out["status"] != "PAPER_VALIDATED"                          # only BACKTEST_QUALIFIED can be promoted
+
+
+def pd_ts(s):
+    import pandas as pd
+    return pd.Timestamp(s, tz="UTC")
+
+
+def test_ai_path_feedback_validation_hypothesis_storage_and_key_redaction(home, monkeypatch):
+    import json as _j
+    from strategylab import engine as E, agents as A
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-SECRETSECRETSECRET123")
+    st = Settings(); st.symbols = ["BTCUSDT"]; st.timeframes = ["1h"]; db = DB(); seen = {}
+    good = {"family": "tsmom", "params": {"lookback": 24, "thr_atr": 0.5}, "side": "both", "stop_atr": 2.0, "target_rr": 2.0, "max_hold": 48,
+            "filters": [{"type": "ema_trend", "n": 100}], "timeframe": "1h", "symbol": "BTCUSDT", "hypothesis": "momentum after quiet", "falsification": "no drift"}
+    bad = [dict(good, filters=[{"type": "exec", "code": "import os"}]), dict(good, filters=[{"type": "atr_pct", "lo": 0.9, "hi": 0.1}]), dict(good, family="evil")]
+    class P(ai.Provider):
+        name = "p"
+        def available(s): return True
+        def complete(s, sy, pr, m): seen["prompt"] = pr; return "```json\n" + _j.dumps([good] + bad) + "\n```", 100, 50
+    st.ai_provider_order = ["p"]; r = ai.Router(db, st, [P()])
+    store = E.DataStore(st, lambda s, tf: D.synthetic(s, tf, n=5000, seed=3)); sup = A.Supervisor(db, st, r, store)
+    for j in sup.plan(2, use_ai=False): E.run_experiment(db, st, store, j)         # create some failure memory
+    props = sup.sci.ai_proposals({("BTCUSDT", "1h")}, sup.mem)
+    assert len(props) == 1 and props[0]["family"] == "tsmom"                        # only the schema-valid proposal survives
+    assert "RESEARCH MEMORY" in seen["prompt"] and "top_failure_reasons" in seen["prompt"]
+    assert "SECRETSECRET" not in seen["prompt"]
+    assert db.q("SELECT source FROM hypotheses WHERE source='ai'")                  # hypothesis persisted with provenance
+    assert "SECRETSECRET" not in ai.scrub("boom sk-ant-SECRETSECRETSECRET123 failed")
+
+
+def test_new_filters_and_family_are_causal_and_valid():
+    df = frame(5000); ref = frame(5000, seed=2)
+    base = dict(family="donchian_breakout", params=dict(n=20, trend_n=0), side="both", stop_atr=2, target_rr=2, max_hold=24, atr_n=14)
+    for flt in ([{"type": "htf_trend", "mult": 4, "n": 20}], [{"type": "er_regime", "n": 20, "mode": "trend", "thr": 0.2}], [{"type": "htf_trend", "mult": 16, "n": 20}, {"type": "er_regime", "n": 50, "mode": "range", "thr": 0.3}]):
+        spec = dict(base, filters=flt); assert ST.validate_spec(spec) == []
+        assert V.lookahead_test(df, spec, ref=ref)["passed"], flt
+    fb = dict(base, family="failed_breakout_fade", params=dict(n=20, k=2), filters=[])
+    assert V.lookahead_test(df, fb)["passed"]
+    assert ST.validate_spec(dict(base, filters=[{"type": "htf_trend", "mult": 5, "n": 20}]))        # non-whitelisted multiplier rejected

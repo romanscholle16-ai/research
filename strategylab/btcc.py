@@ -45,4 +45,27 @@ class ExchangeModel:
         return replace(self, cost_mult=m)
 
 
+# Provenance of every parameter (checked 2026-10-11 against btcc.com pages; BTCC publishes no API/bulk data reachable from here).
+PROVENANCE = {
+    "taker_fee": "CONFLICTING on btcc.com: 0.048% VIP0 (academy fee guide, updated 2026-06-03), 0.045% (BTCUSDT trade page), up to 0.06% (same guide FAQ). Default uses 0.06% = conservative end.",
+    "maker_fee": "CONFLICTING: 0.02% (trade page) vs 0.03% (VIP0 fee guide). Not used by default (all fills modelled taker).",
+    "funding": "VERIFIED-ish (BTCC pages): paid between longs/shorts every 8h at 00:00/08:00/16:00 UTC. HISTORICAL BTCC rates unavailable: Binance rates used as proxy.",
+    "contract_size_min_qty": "BTCUSDT contract size 0.001 BTC (BTCC trade page). ETHUSDT minimum NOT found: 0.01 ETH assumed.",
+    "max_leverage": "BTCUSDT up to 125x listed on a BTCC page; per-tier limits NOT found. 100x cap assumed; sizing search only uses <=50x.",
+    "maint_margin_rate": "NOT FOUND. 0.5% small-size assumption. Liquidation fee NOT FOUND (0.5% assumed).",
+    "spread_slippage": "NOT AVAILABLE (no BTCC quote history). Conservative assumption; stressed via cost multipliers.",
+    "eligibility": "NOT CHECKED: product availability and jurisdiction restrictions must be confirmed by the account holder before any live use.",
+}
+
+PRESETS = {
+    "conservative": ExchangeModel(),                                                   # default: taker 0.06%
+    "listed_vip0": ExchangeModel(name="BTCC (listed VIP0 fee guide)", taker_fee=0.00048, maker_fee=0.0003),
+    "adverse": ExchangeModel(name="BTCC (adverse)", taker_fee=0.0006, half_spread=0.0002, slippage=0.0004, stop_slippage=0.0008),
+}
+
+
+def get_model(name="conservative"):
+    return PRESETS.get(name, PRESETS["conservative"])
+
+
 DEFAULT = ExchangeModel()

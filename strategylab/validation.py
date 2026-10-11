@@ -136,6 +136,23 @@ def validate(F, spec, bounds, em, st, tr_train, rng):
     return out, reasons, trv
 
 
+def robustness(tr: Trades):
+    """Edge must not hinge on a handful of trades or on one calendar year/regime. Returns (details, reasons)."""
+    import datetime as dt
+    out, reasons = {}, []
+    if len(tr) < 20: return out, reasons
+    R = np.sort(tr.R)[::-1]; k = max(1, int(0.05 * len(R)))
+    out["mean_R_without_top5pct"] = float(R[k:].mean())
+    if out["mean_R_without_top5pct"] <= 0: reasons.append("depends_on_few_trades")
+    yrs = np.array([dt.datetime.fromtimestamp(t, dt.timezone.utc).year for t in tr.t_out]); per = {}
+    for y in np.unique(yrs):
+        m = yrs == y
+        if m.sum() >= 5: per[int(y)] = float(tr.R[m].mean())
+    out["mean_R_by_year"] = per
+    if len(per) >= 3 and np.mean([v > 0 for v in per.values()]) < 0.6: reasons.append("single_regime_dependence")
+    return out, reasons
+
+
 def final_stage(F, spec, bounds, em, st, symbol, n_tested, tr_trainval):
     """One-shot locked-test + $300 capital simulation."""
     out = {}; reasons = []
@@ -162,6 +179,7 @@ def final_stage(F, spec, bounds, em, st, symbol, n_tested, tr_trainval):
     # multiple-testing safeguard: Sidak-adjusted p over every distinct strategy ever tested
     allm = metrics(alltr); z = allm["t"]; p = 2 * norm_sf(abs(z)) if z > 0 else 1.0
     adj = 1 - (1 - p) ** max(n_tested, 1)
+    rb, rr = robustness(alltr); out["robustness"] = rb; reasons += rr
     out["multiple_testing"] = dict(t=z, p=p, n_tested=n_tested, adj_p=adj)
     if adj > st.multiple_testing_alpha: reasons.append("fails_multiple_testing")
     return out, reasons, test

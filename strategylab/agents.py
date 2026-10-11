@@ -71,18 +71,32 @@ class ResearchScientist:
         r = self.db.q("SELECT id FROM hypotheses WHERE family=? ORDER BY id LIMIT 1", (family,))
         return r[0]["id"] if r else None
 
+    def feedback(self, mem):
+        """Structured memory digest for the AI: which families survive, which fail and why, and what is already exhausted."""
+        stats = mem.cell_stats(); fam = {}
+        for (f, sy, tf), (n, depth) in stats.items():
+            a = fam.setdefault(f, [0, 0.0]); a[0] += n; a[1] += depth
+        rows = []
+        for f, (n, d) in sorted(fam.items(), key=lambda x: -x[1][0]):
+            rc = mem.reason_counts(f); top = sorted(rc.items(), key=lambda x: -x[1])[:3]
+            prom = self.db.q("SELECT COUNT(*) n FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id WHERE s.family=? AND ss.status='PROMISING'", (f,))[0]["n"]
+            rows.append({"family": f, "tested": n, "promising": prom, "top_failure_reasons": [k for k, _ in top]})
+        return {"families": rows[:20], "blocked_data_ideas": list(ST.BLOCKED_HYPOTHESES),
+                "binding_constraints": "survivors are long-biased 4h trend rules that trade too rarely (weekly-trade gate) and cannot reach $1k/month; need NEW independent edges, ideally >=1 trade/week, robust to costs"}
+
     def ai_proposals(self, avail_cells, mem: Memory, k=3):
-        """Ask the AI for novel, falsifiable variants expressed in the strategy DSL. Output strictly validated."""
+        """Ask Claude for novel, falsifiable variants expressed in the strategy DSL. Output is DATA only: strictly schema-validated,
+        never executed as code, then run through the identical deterministic pipeline (the AI cannot alter any result)."""
         if not self.router: return []
         fams = {f: v["space"] for f, v in ST.FAMILIES.items() if f != "session_drift"}
-        recent = self.db.q("SELECT family, reasons FROM lessons ORDER BY id DESC LIMIT 15")
         sys_p = "You are a quantitative crypto-futures researcher. Reply with ONLY a JSON list. No prose."
-        prompt = (f"Propose up to {k} NOVEL, falsifiable intraday/swing strategy variants for BTCUSDT/ETHUSDT perpetuals using ONLY these families and parameter grids:\n"
+        prompt = (f"Propose up to {k} NOVEL, falsifiable strategy variants for BTCUSDT/ETHUSDT perpetuals using ONLY these families and parameter grids:\n"
                   f"{json.dumps(fams)}\nExit params: stop_atr in [1,1.5,2,3], target_rr in [0,1,1.5,2,3], max_hold in [12,24,48,96], side in long/short/both. "
-                  f"Optional filters list items: {{'type':'ema_trend','n':100}} or {{'type':'atr_pct','w':500,'lo':0.2,'hi':1.0}}.\n"
-                  f"Recent failures: {json.dumps(recent)[:900]}\nAvoid repeating failures. Each item: "
+                  f"Optional filters (max 3): {{'type':'ema_trend','n':100}} | {{'type':'atr_pct','w':500,'lo':0.2,'hi':1.0}} | {{'type':'session','hours':[0,1,2]}}.\n"
+                  f"RESEARCH MEMORY (what failed and why; do not repeat it, redirect away from it):\n{json.dumps(self.feedback(mem))[:3500]}\n"
+                  f"Prefer ideas that combine independently justified signals or target a different regime/market/timeframe than the survivors. Each item: "
                   f'{{"family":..,"params":{{..}},"side":..,"stop_atr":..,"target_rr":..,"max_hold":..,"filters":[],"timeframe":"15m|1h|4h","symbol":"BTCUSDT|ETHUSDT","hypothesis":"why an edge may exist","falsification":"test that would refute it"}}')
-        r = self.router.ask(sys_p, prompt, 1200)
+        r = self.router.ask(sys_p, prompt, 1400)
         if not r: return []
         out = []
         try:
@@ -92,9 +106,11 @@ class ResearchScientist:
             if not isinstance(it, dict): continue
             it.setdefault("atr_n", 14); it.setdefault("filters", [])
             errs = ST.validate_spec(it)
-            fl_ok = all(isinstance(f, dict) and f.get("type") in ST.FILTER_SPACE for f in it["filters"])
-            if errs or not fl_ok or (it.get("symbol"), it.get("timeframe")) not in avail_cells:
-                self.db.log("info", "ai", f"AI proposal rejected by validator: {errs or 'bad filter/cell'}"); continue
+            if errs or (it.get("symbol"), it.get("timeframe")) not in avail_cells:
+                self.db.log("info", "ai", f"AI proposal rejected by validator: {errs or 'unavailable market/timeframe'}"); continue
+            cur = self.db.x("INSERT INTO hypotheses(created,family,text,rationale,falsification,source) VALUES(?,?,?,?,?,?)",
+                            (time.time(), it["family"], str(it.get("hypothesis", ""))[:500], "AI-proposed (" + r.provider + ")", str(it.get("falsification", ""))[:500], "ai"))
+            it["_hypothesis_id"] = cur.lastrowid
             out.append(it)
         return out
 
@@ -195,6 +211,18 @@ class Supervisor:
         self.mem = Memory(db); self.sci = ResearchScientist(db, router); self.inv = StrategyInventor(db, self.mem)
         self.evo = EvolutionSpecialist(db, self.mem)
 
+    def maybe_queue_forward(self):
+        """Daily: sync new archive days, then evaluate BACKTEST_QUALIFIED (and the 15 best PROMISING, informational) on forward data."""
+        if time.time() - self.db.get("data_sync_ts", 0) < 12 * 3600 or self.db.q("SELECT 1 FROM jobs WHERE kind='data_sync' AND status IN ('queued','running')"): return
+        self.db.enqueue("data_sync", {}, priority=2)
+        rows = self.db.q("SELECT strategy_id sid, symbol, timeframe, status FROM strategy_status WHERE synthetic=0 AND symbol!='MULTI' AND status='BACKTEST_QUALIFIED'")
+        prom = self.db.q("SELECT strategy_id sid, symbol, timeframe, status, summary_json sj FROM strategy_status WHERE synthetic=0 AND symbol!='MULTI' AND status='PROMISING' ORDER BY updated DESC LIMIT 400")
+        def p1k(r):
+            try: return json.loads(r["sj"])["final"]["capital_all"]["monthly_withdraw_any"]["1000"]["p"]
+            except Exception: return 0
+        for r in rows + sorted(prom, key=p1k, reverse=True)[:15]:
+            self.db.enqueue("forward", {"strategy_id": r["sid"], "symbol": r["symbol"], "timeframe": r["timeframe"]}, priority=3, not_before=time.time() + 30)
+
     def maybe_queue_portfolio(self):
         """Rebuild portfolios whenever the pool of validated strategies has grown by >=20 (never more than hourly)."""
         n = self.db.q("SELECT COUNT(*) n FROM trades WHERE symbol!='MULTI'")[0]["n"]
@@ -221,7 +249,7 @@ class Supervisor:
         if use_ai:
             try:
                 for p in self.sci.ai_proposals(set(cells), self.mem):
-                    jobs.append(self._job(p, p["symbol"], p["timeframe"], f"ai:{p.get('hypothesis','')[:80]}", p["family"]))
+                    j = self._job(p, p["symbol"], p["timeframe"], f"ai:{p.get('hypothesis','')[:80]}", p["family"]); j["hypothesis_id"] = p.get("_hypothesis_id", j["hypothesis_id"]); jobs.append(j)
             except Exception as e: self.db.log("warn", "supervisor", f"AI proposal step failed: {e}")
         attempts = 0
         while len(jobs) < n and attempts < n * 30:

@@ -103,6 +103,7 @@ def run_portfolio(db, st, store, em=DEFAULT, hb=lambda: None):
         if c["monthly_withdraw_any"]["1000"]["p"] < st.min_target_prob: reasons.append("cannot_reach_target_" + name)
         if c["ruin"]["p"] > st.max_ruin_prob: reasons.append("excess_ruin_risk_" + name)
         if c["lose_50pct"]["p"] > st.max_lose50_prob: reasons.append("excess_drawdown_" + name)
+    rb, rr = V.robustness(alltr); out["robustness"] = rb; reasons += rr
     n_tested = db.q("SELECT COUNT(*) n FROM strategies")[0]["n"]
     am = metrics(alltr); z = am["t"]; p = 2 * V.norm_sf(abs(z)) if z > 0 else 1.0
     out["multiple_testing"] = dict(t=z, p=p, n_tested=n_tested, adj_p=1 - (1 - p) ** max(n_tested, 1))

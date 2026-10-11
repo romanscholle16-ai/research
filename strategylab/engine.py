@@ -1,6 +1,7 @@
 """Experiment execution: Backtesting Engineer + Statistical Validator + Risk Specialist agents (deterministic code)."""
 from __future__ import annotations
 import json, time
+import pandas as pd
 from collections import OrderedDict
 import numpy as np
 from . import strategies as ST, validation as V, data as D
@@ -19,13 +20,18 @@ class DataStore:
         k = (symbol, tf)
         if k in self.c: self.c.move_to_end(k); return self.c[k]
         df, meta = self.loader(symbol, tf)
+        full = df
+        cut = pd.Timestamp(self.st.research_end, tz="UTC") if getattr(self.st, "research_end", None) else None
+        if cut is not None and not meta.get("synthetic"): df = df[df.index < cut]
         ref = None
         other = "ETHUSDT" if symbol == "BTCUSDT" else "BTCUSDT" if symbol == "ETHUSDT" else None
         if other and other in self.st.symbols:
-            try: ref = self.loader(other, tf)[0]
+            try:
+                ref = self.loader(other, tf)[0]
+                if cut is not None and not meta.get("synthetic"): ref = ref[ref.index < cut]
             except Exception: ref = None
         F = Features(df, ref)
-        item = dict(df=df, meta=meta, F=F, bounds=period_bounds(len(df), self.st.train_frac, self.st.val_frac), cache={})
+        item = dict(df=df, df_full=full, meta=meta, F=F, bounds=period_bounds(len(df), self.st.train_frac, self.st.val_frac), cache={})
         self.c[k] = item
         while len(self.c) > self.max: self.c.popitem(last=False)
         return item

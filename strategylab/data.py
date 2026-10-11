@@ -64,6 +64,22 @@ def _read_one(f, kind):
     return df.dropna(subset=[0])
 
 
+def sync_daily(symbol, start="2026-10-01", end=None, log=print):
+    """Download daily 1m kline archives (post-monthly-archive 'forward' data). Returns number of new days."""
+    end = pd.Timestamp(end or time.strftime("%Y-%m-%d", time.gmtime(time.time() - 86400)), tz="UTC").normalize()
+    d = data_dir() / symbol / "klines"; d.mkdir(parents=True, exist_ok=True); new = 0
+    for day in pd.date_range(pd.Timestamp(start, tz="UTC"), end, freq="D"):
+        ds = f"{day:%Y-%m-%d}"; out = d / f"1m-{ds}.csv.gz"
+        if out.exists(): continue
+        raw = _get(f"{BASE.replace('monthly', 'daily')}/klines/{symbol}/1m/{symbol}-1m-{ds}.zip")
+        if raw is None: continue            # not published yet
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            df = pd.read_csv(z.open(z.namelist()[0]), header=None, dtype=str)
+        df = df[pd.to_numeric(df.iloc[:, 0], errors="coerce").notna()].iloc[:, :11]
+        df.to_csv(out, index=False, compression="gzip"); new += 1
+    return new
+
+
 def _read_all(symbol, kind, tf):
     d = data_dir() / symbol / kind
     pat = f"{tf}-*.csv.gz" if kind == "klines" else "f-*.csv.gz"

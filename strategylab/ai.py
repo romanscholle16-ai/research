@@ -13,6 +13,18 @@ PRICE_PER_MTOK = {  # (in, out) USD per million tokens - approximate, configurab
     "anthropic": (3.0, 15.0), "openai_compat": (2.5, 10.0), "ollama": (0.0, 0.0)}
 
 
+import re
+_SECRET = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{12,}|x-api-key['\"]?\s*[:=]\s*\S+)", re.I)
+
+
+def scrub(text, extra_secrets=()):
+    """Redact API keys from anything that may be logged or stored."""
+    t = _SECRET.sub("[REDACTED]", str(text))
+    for k in list(extra_secrets) + [os.environ.get(n, "") for n in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")]:
+        if k and len(k) > 8: t = t.replace(k, "[REDACTED]")
+    return t
+
+
 class QuotaExhausted(Exception): pass
 class ProviderUnavailable(Exception): pass
 
@@ -100,6 +112,7 @@ class Router:
         return dict(providers=out, budget_ok=self.budget_ok(), spent_24h=self._spent(time.time() - 86400), spent_30d=self._spent(time.time() - 30 * 86400))
 
     def ask(self, system, prompt, max_tokens=1500) -> AIResult | None:
+        prompt = scrub(prompt)      # never send keys to a model, even by accident
         """Returns None when no AI is usable right now (caller falls back to deterministic logic). Never raises."""
         if not self.budget_ok():
             self.db.set("ai_state", "budget_exhausted"); return None
@@ -117,12 +130,12 @@ class Router:
                     return AIResult(text, p.name, ti, to, cost)
                 except QuotaExhausted as e:
                     self.cool[p.name] = time.time() + 3600; reason = f"quota_exhausted:{p.name}"; self.db.set("ai_state", reason)
-                    self.db.log("warn", "ai", f"{p.name} quota exhausted; falling back ({e})"); break
+                    self.db.log("warn", "ai", scrub(f"{p.name} quota exhausted; falling back ({e})")); break
                 except ProviderUnavailable as e:
                     time.sleep(min(2 ** attempt, 4) if not os.environ.get("STRATEGYLAB_FAST") else 0)
                     if attempt == self.st.ai_max_retries:
-                        self.cool[p.name] = time.time() + 300; self.db.log("warn", "ai", f"{p.name} unavailable: {e}")
+                        self.cool[p.name] = time.time() + 300; self.db.log("warn", "ai", scrub(f"{p.name} unavailable: {e}"))
                 except Exception as e:  # malformed response etc.
-                    self.cool[p.name] = time.time() + 300; self.db.log("warn", "ai", f"{p.name} error: {e}"); break
+                    self.cool[p.name] = time.time() + 300; self.db.log("warn", "ai", scrub(f"{p.name} error: {e}")); break
         self.db.set("ai_state", reason or "none_available")
         return None

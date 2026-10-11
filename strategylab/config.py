@@ -16,8 +16,9 @@ def home_dir() -> Path:
 @dataclass
 class Settings:
     symbols: list = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframes: list = field(default_factory=lambda: ["15m", "1h", "4h"])
+    timeframes: list = field(default_factory=lambda: ["5m", "15m", "1h", "4h"])
     data_start: str = "2019-09"
+    research_end: str = "2026-10-01"   # research (train/val/test) data stops here; later bars are the untouched FORWARD set
     # holdout: final fraction of history never used for selection (touched once per strategy)
     train_frac: float = 0.5
     val_frac: float = 0.25          # remaining 0.25 = locked test
@@ -38,6 +39,7 @@ class Settings:
     max_rss_mb: int = 6000
     job_timeout_s: int = 600
     watchdog_stall_s: int = 900
+    progress_stall_s: int = 900         # no job completed for this long while jobs are queued => restart worker
     max_job_attempts: int = 3
     # AI
     ai_daily_budget_usd: float = 2.0
@@ -45,6 +47,7 @@ class Settings:
     ai_provider_order: list = field(default_factory=lambda: ["anthropic", "openai_compat", "ollama", "deterministic"])
     ai_model_anthropic: str = "claude-sonnet-5-5"
     ai_max_retries: int = 2
+    exchange_preset: str = "conservative"   # conservative | listed_vip0 | adverse (see btcc.PRESETS)
     # loop pacing
     idle_sleep_s: float = 0.5
     autostart_on_boot: bool = False

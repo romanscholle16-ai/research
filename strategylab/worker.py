@@ -7,6 +7,7 @@ from .ai import Router
 from .engine import DataStore, run_experiment
 from .agents import Supervisor, NoData
 from . import data as D, resources
+from .btcc import get_model
 
 EXIT_RSS = 75
 
@@ -45,6 +46,7 @@ def main():
         from .mockai import MockProvider
         router.providers = [MockProvider(db)]; router.st.ai_provider_order = ["mock"]
     store = DataStore(st, make_loader())
+    em = get_model(st.exchange_preset)
     sup = Supervisor(db, st, router, store)
     db.log("info", "worker", f"worker started pid={os.getpid()}")
     db.set("worker_pid", os.getpid())
@@ -72,13 +74,20 @@ def main():
                 maybe_inject(db, job["kind"])
                 if job["kind"] == "plan":
                     ai_ok = db.get("ai_enabled", True)
-                    sup.maybe_queue_portfolio()
+                    sup.maybe_queue_portfolio(); sup.maybe_queue_forward()
                     plans = sup.plan(job["payload"].get("n", 8), use_ai=ai_ok)
                     for p in plans: db.enqueue("experiment", p, priority=5)
                     db.finish_job(job["id"], {"planned": len(plans)})
                     db.set("blocker", None)
                     if not plans:
                         time.sleep(1)
+                elif job["kind"] == "data_sync":
+                    n = sum(D.sync_daily(sym, st.research_end) for sym in st.symbols); db.set("data_sync_ts", time.time())
+                    store.c.clear()           # reload frames so forward bars become visible
+                    db.finish_job(job["id"], {"new_days": n}); db.log("info", "data", f"daily sync: {n} new day file(s)")
+                elif job["kind"] == "forward":
+                    from .forward import evaluate_forward
+                    p_ = job["payload"]; db.finish_job(job["id"], evaluate_forward(db, st, store, p_["strategy_id"], p_["symbol"], p_["timeframe"], em))
                 elif job["kind"] == "recheck":
                     from .engine import recheck_placebo
                     db.finish_job(job["id"], recheck_placebo(db, st, store, job["payload"]))
@@ -87,7 +96,7 @@ def main():
                     res = run_portfolio(db, st, store, hb=lambda: db.heartbeat(job["id"])); db.finish_job(job["id"], res)
                     db.log("info", "portfolio", f"portfolio build: {res}")
                 elif job["kind"] == "experiment":
-                    res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]))
+                    res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]), em=em)
                     db.finish_job(job["id"], res)
                     db.set("cycles", db.get("cycles", 0) + 1)
                     db.set("last_experiment", {**res, "symbol": job["payload"]["symbol"], "timeframe": job["payload"]["timeframe"],

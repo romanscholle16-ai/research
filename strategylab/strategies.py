@@ -86,6 +86,17 @@ def sig_bos(F, p):
     return np.nan_to_num(L.astype(float)) > 0, np.nan_to_num(S.astype(float)) > 0
 
 
+def sig_failbreak(F, p):
+    """Momentum exhaustion: price closes beyond the n-bar extreme, then closes back inside within k bars -> fade the failed move."""
+    hh, ll = F.hh(p["n"]), F.ll(p["n"]); brk_up = F.c > hh; brk_dn = F.c < ll
+    L = np.zeros(F.n, bool); S = np.zeros(F.n, bool)
+    for k in range(1, p["k"] + 1):
+        up_k = np.r_[np.zeros(k, bool), brk_up[:-k]]; dn_k = np.r_[np.zeros(k, bool), brk_dn[:-k]]
+        hh_k = np.r_[np.full(k, np.nan), hh[:-k]]; ll_k = np.r_[np.full(k, np.nan), ll[:-k]]
+        S |= up_k & (F.c < hh_k); L |= dn_k & (F.c > ll_k)
+    return L, S
+
+
 def sig_funding(F, p):
     pr = F.fund_pct(p["w"])
     return pr < p["pct"], pr > 1 - p["pct"]   # crowded shorts -> long; crowded longs -> short
@@ -214,6 +225,10 @@ FAMILIES = {
         text="The ETH/BTC log-ratio mean-reverts; trade the relatively cheap asset long and the rich asset short.",
         why="Cross-asset relative value: shared beta factor, idiosyncratic flows are transient.",
         falsify="Extreme ratio z-scores are not followed by convergence."),
+    "failed_breakout_fade": dict(fn=sig_failbreak, space={"n": [20, 40, 80], "k": [1, 2, 4]}, requires=[],
+        text="Breakouts that close back inside the range within a few bars trap breakout traders; the squeeze of their stops drives a reversal.",
+        why="Trapped-trader dynamics: stops of late breakout buyers/sellers fuel the move back (momentum exhaustion).",
+        falsify="Bars after a failed breakout show no reversal drift versus matched random bars."),
     "cross_asset_leadlag": dict(fn=sig_leadlag, space={"n": [1, 2, 4], "thr_atr": [0.5, 1.0, 1.5]}, requires=["ref"],
         text="BTC leads ETH (and vice versa) at short horizons; laggard catches up.",
         why="Information is priced first in the most liquid instrument; arbitrageurs equilibrate with delay.",
@@ -232,6 +247,8 @@ FILTER_SPACE = {  # optional AND-filters appended by Evolution agent
     "ema_trend": {"n": [50, 100, 200]},
     "atr_pct": {"w": [500], "lo": [0.2, 0.4], "hi": [0.8, 1.0]},
     "session": {"hours": [list(range(0, 8)), list(range(8, 16)), list(range(16, 24))]},
+    "htf_trend": {"mult": [4, 16], "n": [20, 50]},
+    "er_regime": {"n": [20, 50], "mode": ["trend", "range"], "thr": [0.2, 0.3]},
 }
 
 
@@ -260,6 +277,15 @@ def validate_spec(spec: dict) -> list[str]:
         if spec.get(k) is None or spec[k] <= 0: errs.append(f"bad {k}")
     if spec.get("side") not in SIDES: errs.append("bad side")
     if spec.get("target_rr", 0) < 0: errs.append("bad target_rr")
+    for f in spec.get("filters") or []:       # filters are data, never code: strict whitelist + ranges
+        t = f.get("type") if isinstance(f, dict) else None
+        if t not in FILTER_SPACE: errs.append(f"bad filter {t}"); continue
+        if t == "ema_trend" and not (isinstance(f.get("n"), int) and 5 <= f["n"] <= 500): errs.append("bad ema n")
+        if t == "atr_pct" and not (all(isinstance(f.get(k), (int, float)) for k in ("lo", "hi")) and 0 <= f["lo"] < f["hi"] <= 1.0): errs.append("bad atr_pct range")
+        if t == "htf_trend" and not (f.get("mult") in (2, 3, 4, 6, 8, 12, 16) and isinstance(f.get("n"), int) and 5 <= f["n"] <= 200): errs.append("bad htf_trend")
+        if t == "er_regime" and not (isinstance(f.get("n"), int) and 5 <= f["n"] <= 200 and f.get("mode") in ("trend", "range") and isinstance(f.get("thr"), (int, float)) and 0 < f["thr"] < 1): errs.append("bad er_regime")
+        if t == "session" and not (isinstance(f.get("hours"), list) and f["hours"] and all(isinstance(h, int) and 0 <= h < 24 for h in f["hours"])): errs.append("bad session hours")
+    if len(spec.get("filters") or []) > 3: errs.append("too many filters")
     if spec.get("stop_atr", 0) and spec["stop_atr"] > 10: errs.append("stop too wide")
     return errs
 
@@ -273,6 +299,10 @@ def apply_filters(F, spec, L, S):
             pr = F.atr_pct(14, f.get("w", 500)); m = (pr >= f["lo"]) & (pr <= f["hi"]); L = L & m; S = S & m
         elif t == "session":
             m = np.isin(F.hour, f["hours"]); L = L & m; S = S & m
+        elif t == "htf_trend":
+            e = F.htf_ema(f["mult"], f["n"]); L = L & (F.c > e); S = S & (F.c < e)
+        elif t == "er_regime":
+            er = F.efficiency_ratio(f["n"]); m = (er >= f["thr"]) if f["mode"] == "trend" else (er < f["thr"]); m = np.nan_to_num(m.astype(float)) > 0; L = L & m; S = S & m
     return L, S
 
 
