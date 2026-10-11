@@ -28,7 +28,7 @@ def feats(spec, sy, tf):
 
 
 class Surrogate:
-    def __init__(self, db, ttl=900):
+    def __init__(self, db, ttl=3600):
         self.db, self.ttl, self.t = db, ttl, 0.0; self.idx = {}; self.w = None; self.Ainv = None; self.stats = {}; self.wv = None
 
     def _vec(self, fl):
@@ -38,7 +38,7 @@ class Surrogate:
             if i is not None: x[i] = 1.0
         return x
 
-    def fit(self, limit=40000):
+    def fit(self, limit=20000):
         rows = self.db.q("""SELECT s.spec_json sj, e.symbol sy, e.timeframe tf, e.metrics_json m FROM experiments e JOIN strategies s ON s.id=e.strategy_id
                             WHERE e.stage='screen' AND e.synthetic=0 AND e.timeframe!='4h' ORDER BY e.id DESC LIMIT ?""", (limit,))
         data = []
@@ -52,7 +52,7 @@ class Surrogate:
         data.reverse(); cnt = {}
         for fl, _, _ in data:
             for k in fl: cnt[k] = cnt.get(k, 0) + 1
-        self.idx = {k: i for i, k in enumerate(sorted(k for k, c in cnt.items() if c >= 3))}
+        self.idx = {k: i for i, k in enumerate(sorted(k for k, c in cnt.items() if c >= 6))}
         X = np.zeros((len(data), len(self.idx)), dtype=np.float32); y = np.array([d[1] for d in data]); wt = np.array([d[2] for d in data])
         for i, (fl, _, _) in enumerate(data):
             for k in fl:
@@ -60,14 +60,18 @@ class Surrogate:
                 if j is not None: X[i, j] = 1.0
         cut = int(len(data) * 0.8); lam = 5.0
 
-        def solve(Xa, ya, wa):
-            A = (Xa.T * wa) @ Xa + lam * np.eye(Xa.shape[1]); return np.linalg.solve(A, (Xa.T * wa) @ ya), A
-        w_tr, _ = solve(X[:cut].astype(np.float64), y[:cut], wt[:cut]); pred = X[cut:] @ w_tr; act = y[cut:]
+        def solve(Xa, ya, wa):          # normal equations accumulated in row chunks: never materialises a full float64 copy of X (was a multi-GB spike)
+            p = Xa.shape[1]; A = lam * np.eye(p); b = np.zeros(p)
+            for i in range(0, len(Xa), 4096):
+                xc = np.asarray(Xa[i:i + 4096], dtype=np.float64); w = wa[i:i + 4096]
+                A += (xc.T * w) @ xc; b += xc.T @ (w * ya[i:i + 4096])
+            return np.linalg.solve(A, b), A
+        w_tr, _ = solve(X[:cut], y[:cut], wt[:cut]); pred = X[cut:].astype(np.float64) @ w_tr; act = y[cut:]
         order = np.argsort(pred)[::-1]; top = order[:max(10, len(order) // 10)]
         corr = float(np.corrcoef(pred, act)[0, 1]) if pred.std() > 0 else 0.0
         self.stats = dict(n=len(data), holdout_corr=round(corr, 3), top_decile_mean_R=round(float(act[top].mean()), 4), all_mean_R=round(float(act.mean()), 4),
                           top_decile_hit=round(float((act[top] > 0.05).mean()), 3), base_hit=round(float((act > 0.05).mean()), 3), features=len(self.idx), ts=time.time())
-        self.w, A = solve(X.astype(np.float64), y, wt); self.Ainv = np.linalg.inv(A); self.t = time.time()
+        self.w, A = solve(X, y, wt); self.Ainv = np.linalg.inv(A); self.t = time.time()
         self._fit_val(limit, solve)
         try: self.db.set("surrogate_stats", self.stats)
         except Exception: pass
