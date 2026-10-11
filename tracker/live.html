@@ -1,0 +1,140 @@
+<title>Live Test Feed</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a "running now" bar over a two-column body: newest completed tests as a feed, throughput + totals beside it. */
+:root{--bg:#f3f5f6;--panel:#ffffff;--fg:#17212b;--mut:#5d6b78;--line:#dbe1e6;--acc:#0b7a75;--acc-soft:#d9efed;--ok:#1a7f4b;--ok-soft:#dcefe3;--warn:#a86400;--warn-soft:#f6ead2;--bad:#b3321f;--bad-soft:#f6e0db;--new:#e7f4f3;
+--sans:"Public Sans",system-ui,"Segoe UI",sans-serif;--mono:"JetBrains Mono",ui-monospace,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f161c;--panel:#17212a;--fg:#e6edf2;--mut:#93a3b1;--line:#27343f;--acc:#4cc2ba;--acc-soft:#17383a;--ok:#5ccb8d;--ok-soft:#1b3326;--warn:#e3a73f;--warn-soft:#38301a;--bad:#f08a78;--bad-soft:#3b2420;--new:#173236;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f161c;--panel:#17212a;--fg:#e6edf2;--mut:#93a3b1;--line:#27343f;--acc:#4cc2ba;--acc-soft:#17383a;--ok:#5ccb8d;--ok-soft:#1b3326;--warn:#e3a73f;--warn-soft:#38301a;--bad:#f08a78;--bad-soft:#3b2420;--new:#173236;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans);padding-inline:16px;padding-block:20px}
+.wrap{max-width:1100px;margin:0 auto;display:grid;gap:16px}
+h1{font-size:1.5rem;margin:0;letter-spacing:-.01em}
+h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);margin:0 0 10px;font-weight:600}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.top{display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;justify-content:space-between}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:99px;font-weight:600;font-size:.85rem;border:1px solid var(--line);background:var(--panel)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mut)}
+.live .dot{background:var(--ok);animation:pulse 1.6s ease-in-out infinite}
+.late .dot{background:var(--warn)} .off .dot{background:var(--bad)}
+@keyframes pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--ok) 0%,transparent);opacity:.5}}
+@media (prefers-reduced-motion:reduce){.live .dot{animation:none}.row.fresh{animation:none}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.now{display:grid;grid-template-columns:auto 1fr auto;gap:6px 16px;align-items:center}
+@media(max-width:640px){.now{grid-template-columns:1fr}}
+.spin{width:18px;height:18px;border:3px solid var(--acc-soft);border-top-color:var(--acc);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.body{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+@media(max-width:860px){.body{grid-template-columns:1fr}}
+.row{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:4px 12px;padding:9px 8px;border-top:1px solid var(--line);align-items:center}
+.row:first-child{border-top:0}
+.row.fresh{animation:fresh 2.8s ease-out}
+@keyframes fresh{0%{background:var(--new)}100%{background:transparent}}
+.row small{color:var(--mut);display:block;overflow-wrap:anywhere}
+.tag{font-family:var(--mono);font-size:.74rem;padding:2px 8px;border-radius:6px;white-space:nowrap}
+.t-rej{background:var(--bad-soft);color:var(--bad)} .t-pro{background:var(--warn-soft);color:var(--warn)} .t-ok{background:var(--ok-soft);color:var(--ok)}
+.feed{max-height:640px;overflow-y:auto}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.k{color:var(--mut);font-size:.75rem}.v{font-family:var(--mono);font-size:1.35rem;font-weight:600;font-variant-numeric:tabular-nums}
+.foot{color:var(--mut);font-size:.8rem}
+.tg{background:none;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:.8rem}
+.tg:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.next{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:.74rem;padding:2px 8px;border-radius:6px;background:var(--bg);color:var(--mut)}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:12px}.bar i{display:block;height:100%;background:var(--acc);width:0}
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div><h1>Live Test Feed</h1><div class="foot">Strategy search on BTC and ETH perpetuals. Research only, no live trading.</div></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span id="pill" class="pill off"><span class="dot"></span><span id="pilltxt">Waiting for first update</span></span><button class="tg" id="theme" type="button">Theme</button></div>
+  </div>
+
+  <div class="panel">
+    <h2>Running now</h2>
+    <div class="now" id="now"><span class="foot">Waiting for the first update from the research service…</span></div>
+    <div class="bar" title="Time until the next update"><i id="prog"></i></div>
+  </div>
+
+  <div class="body">
+    <div class="panel"><h2>Tests just completed <span class="foot" id="feedmeta"></span></h2><div class="feed" id="feed"></div></div>
+    <div style="display:grid;gap:16px;align-content:start;min-width:0">
+      <div class="panel"><h2>Throughput</h2><div id="spark"></div><div class="foot" id="rate"></div></div>
+      <div class="panel"><h2>Totals so far</h2><div class="stats" id="stats"></div></div>
+      <div class="panel"><h2>Queued next</h2><div class="next" id="next"></div></div>
+    </div>
+  </div>
+  <p class="foot" id="foot">Each update lists the newest tests finished since the previous one. Hundreds can finish between updates, so the list is a sample of the latest 40. A test is one strategy tried on one market and timeframe, taken through screening, validation and a locked-period check.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => Number(n).toLocaleString('en-US');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ticks = [], gotAt = 0, shown = new Set(), cadence = 120;
+
+function render() {
+  if (!ticks.length) return;
+  const t = ticks[0];
+  $('theme').onclick = () => { const r = document.documentElement; const cur = r.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'); r.dataset.theme = cur === 'dark' ? 'light' : 'dark'; };
+  if (ticks.length > 1 && ticks[0].since_secs) cadence = Math.max(30, ticks[0].since_secs);
+
+  // running now
+  const r = t.running;
+  $('now').innerHTML = r
+    ? `<span class="spin" aria-hidden="true"></span><div><b class="mono">${esc(r.sym)} ${esc(r.tf)}</b> <span class="chip">${esc(r.kind)}</span><div class="foot">${esc((r.note||'').replace(/^evolve:/,'evolving: ').slice(0,110))}</div></div><span class="mono foot" id="elapsed"></span>`
+    : `<span class="foot">Between jobs at the moment of the last update.</span>`;
+  $('next').innerHTML = (t.next||[]).map(n => `<span class="chip">${esc(n.family)} · ${esc(n.sym)} ${esc(n.tf)}</span>`).join('') || '<span class="foot">Nothing queued at the last update.</span>';
+
+  // feed
+  const firstLoad = shown.size === 0;
+  const html = t.feed.map(f => {
+    const cls = f.status === 'PROMISING' ? 't-pro' : f.status.startsWith('BACKTEST') ? 't-ok' : 't-rej';
+    const label = f.status === 'REJECTED' ? 'rejected' : f.status.toLowerCase().replace('_',' ');
+    const fresh = !firstLoad && !shown.has(f.id+f.sym+f.tf) ? ' fresh' : '';
+    return `<div class="row${fresh}"><span class="mono foot">${f.age < 90 ? Math.round(f.age)+'s' : Math.round(f.age/60)+'m'} ago</span>
+      <div><b>${esc(f.family.replaceAll('_',' '))}</b> <span class="mono foot" style="display:inline">${esc(f.sym)} ${esc(f.tf)}</span>
+      <small>stopped at ${esc(f.stage)} · ${f.trades} trades · mean ${f.R.toFixed(2)}R${f.why.length? ' · '+esc(f.why.join(', ').replaceAll('_',' ')):''}</small></div>
+      <span class="tag ${cls}">${label}</span></div>`;
+  }).join('');
+  $('feed').innerHTML = html;
+  t.feed.forEach(f => shown.add(f.id+f.sym+f.tf));
+  $('feedmeta').textContent = `· ${fmt(t.completed_since_last)} finished since the previous update, newest ${t.feed.length} shown`;
+
+  // totals
+  const T = t.totals;
+  $('stats').innerHTML = [['Tests run',fmt(T.experiments)],['Promising',fmt(T.promising)],['Rejected',fmt(T.rejected)],['Qualified',fmt(T.qualified)]]
+    .map(([k,v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+  // throughput sparkline (tests per minute between updates)
+  const pts = ticks.slice().reverse().filter(x => x.since_secs).map(x => x.completed_since_last / (x.since_secs/60));
+  if (pts.length >= 2) {
+    const W=300,H=70,P=4, mx=Math.max(...pts)*1.1||1; const X=i=>P+(W-2*P)*i/(pts.length-1), Y=v=>H-P-(H-2*P)*v/mx;
+    const line = pts.map((v,i)=>X(i).toFixed(1)+','+Y(v).toFixed(1)).join(' ');
+    $('spark').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Tests per minute across recent updates"><polygon points="${X(0)},${H-P} ${line} ${X(pts.length-1)},${H-P}" fill="var(--acc)" opacity=".15"/><polyline points="${line}" fill="none" stroke="var(--acc)" stroke-width="2"/><circle cx="${X(pts.length-1)}" cy="${Y(pts[pts.length-1])}" r="3.5" fill="var(--acc)"/></svg>`;
+    $('rate').textContent = `${Math.round(pts[pts.length-1])} tests a minute over the last update, ${pts.length} updates plotted.`;
+  } else { $('spark').innerHTML=''; $('rate').textContent = t.since_secs ? `${Math.round(t.completed_since_last/(t.since_secs/60))} tests a minute over the last update.` : 'Needs a second update to draw a trend.'; }
+}
+
+function tickClock() {
+  if (!ticks.length) return;
+  const t = ticks[0], since = (Date.now() - gotAt) / 1000;
+  const el = $('elapsed'); if (el && t.running) el.textContent = 'running ' + Math.round(t.running.elapsed + since) + ' s';
+  const running = t.control === 'running' && t.svc_age < 60;
+  const pill = $('pill'), txt = $('pilltxt');
+  if (!running) { pill.className='pill off'; txt.textContent = t.control === 'running' ? 'Research service silent at last update' : 'Research '+t.control; }
+  else if (since > cadence * 2.5) { pill.className='pill late'; txt.textContent = 'Research running · no update for ' + Math.round(since/60) + ' min'; }
+  else { pill.className='pill live'; txt.textContent = 'Research running · updated ' + Math.round(since) + ' s ago'; }
+  $('prog').style.width = Math.min(100, 100 * since / cadence) + '%';
+}
+
+(async () => {
+  const db = await claude.use('db');
+  if (!db) { $('now').textContent = 'The live feed needs a signed-in view of this page to read its data.'; return; }
+  db.collection('ticks').orderBy('seq', 'desc').limit(30).onSnapshot(snap => {
+    ticks = snap.docs.map(d => d.data()).filter(Boolean);
+    gotAt = Date.now(); render(); tickClock();
+  }, e => { $('now').textContent = 'Could not read the feed (' + (e && e.code || 'error') + ').'; });
+  setInterval(tickClock, 1000);
+})();
+</script>
