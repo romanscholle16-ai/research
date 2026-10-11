@@ -16,7 +16,8 @@ def test_features_are_causal_for_all_families():
         params = {k: (g[0] if g else None) for k, g in f["space"].items()}
         if fam == "session_drift": params = {"hours": [3], "dir": 1}
         if fam == "gp_rule": params = {"rule": [["ret12_gt", 0.5], ["er20_gt", 0.3]], "side": "long"}
-        spec = dict(family=fam, params=params, side="long" if fam == "gp_rule" else "both", stop_atr=2, target_rr=2, max_hold=24, atr_n=14, filters=[])
+        if fam == "opp_pattern": params = {"conds": [["mom6", ">", 0.5], ["vwap", "<=", 1.0], ["swp_lo", ">", 0.05]], "side": "long"}
+        spec = dict(family=fam, params=params, side="long" if fam in ("gp_rule", "opp_pattern") else "both", stop_atr=2, target_rr=2, max_hold=24, atr_n=14, filters=[])
         res = V.lookahead_test(df, spec, ref=ref)
         assert res["passed"], (fam, res)
 
@@ -266,3 +267,12 @@ def test_new_filters_and_family_are_causal_and_valid():
     fb = dict(base, family="failed_breakout_fade", params=dict(n=20, k=2), filters=[])
     assert V.lookahead_test(df, fb)["passed"]
     assert ST.validate_spec(dict(base, filters=[{"type": "htf_trend", "mult": 5, "n": 20}]))        # non-whitelisted multiplier rejected
+
+
+def test_daily_file_numeric_header_row_is_dropped(tmp_path):
+    import gzip
+    from strategylab import data as D
+    f = tmp_path / "1m-2026-10-01.csv.gz"
+    with gzip.open(f, "wt") as fh: fh.write("0,1,2,3,4,5,6,7,8,9,10\n1790000000000,100,101,99,100.5,10,1790000059999,1000,5,4,400\n")
+    out = D._read_one(f, "klines")
+    assert len(out) == 1 and out.iloc[0, 0] == 1790000000000

@@ -79,7 +79,8 @@ def _read_one(f, kind):
     if not df.empty and pd.to_numeric(df.iloc[0, 0], errors="coerce") != pd.to_numeric(df.iloc[0, 0], errors="coerce"):
         df = df.iloc[1:]                       # drop textual header row (archive files vary: some have none)
     df = df.apply(pd.to_numeric, errors="coerce")
-    return df.dropna(subset=[0])
+    df = df.dropna(subset=[0])
+    return df[df[0] > 1e12] if kind in ("klines", "fundingRate") else df      # drop numeric header rows ("0,1,2,..") found in daily files: timestamps are epoch milliseconds
 
 
 def sync_daily(symbol, start="2026-10-01", end=None, log=print):

@@ -161,7 +161,16 @@ def sig_gp(F, p):
     return grammar.rule_signals(F, p["rule"], p["side"])
 
 
+def sig_opp(F, p):
+    from . import opportunity
+    return opportunity.signals(F, p)
+
+
 FAMILIES = {
+    "opp_pattern": dict(fn=sig_opp, space={}, requires=[], internal=True,
+        text="Data-mined pre-conditions of favourable ETH price paths (opportunity-discovery engine; thresholds fitted on training bars only).",
+        why="Recurring market states (volatility, momentum, sweeps, positioning, BTC-lead, session) that preceded target-before-stop paths on train and held on an embargoed validation period.",
+        falsify="Net expectancy <= 0 after passive-fill costs on validation/locked test, or no better than random entries."),
     "donchian_breakout": dict(fn=sig_donchian, space={"n": [20, 40, 80, 160], "trend_n": [0, 100, 200]}, requires=[],
         text="Range breakouts continue because stop clusters beyond ranges trigger forced order flow.",
         why="Breakout stops and momentum ignition create short-horizon serial correlation after range expansion.",
@@ -279,6 +288,13 @@ def validate_spec(spec: dict) -> list[str]:
     fam = FAMILIES.get(spec.get("family"))
     if not fam: return [f"unknown family {spec.get('family')}"]
     p = spec.get("params") or {}
+    if spec.get("family") == "opp_pattern":
+        c = p.get("conds")
+        from . import opportunity as _o
+        if not (isinstance(c, list) and 1 <= len(c) <= 3 and all(isinstance(x, list) and len(x) == 3 and x[0] in _o.FEATS and x[1] in (">", "<=") and isinstance(x[2], (int, float)) for x in c)): errs.append("bad conds")
+        if p.get("side") not in ("long", "short") or spec.get("side") != p.get("side"): errs.append("side mismatch")
+        if spec.get("stop_atr") is None or spec["stop_atr"] <= 0 or spec.get("max_hold", 0) <= 0 or spec.get("target_rr", 0) < 0: errs.append("bad exits")
+        return errs
     if spec.get("family") == "gp_rule":
         from . import grammar
         errs = grammar.validate_rule(p.get("rule"), p.get("side")) + ([] if spec.get("side") == p.get("side") else ["side mismatch"])

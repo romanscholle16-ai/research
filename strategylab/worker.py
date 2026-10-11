@@ -72,6 +72,8 @@ def main():
         try:
             if primary and time.time() - (db.get("refine_last") or 0) > 1200 and not db.q("SELECT 1 FROM jobs WHERE kind='refine' AND status IN ('queued','running')"):
                 db.enqueue("refine", {}, priority=2)
+            if primary and time.time() - (db.get("eth_discovery_last") or 0) > 3 * 3600 and not db.q("SELECT 1 FROM jobs WHERE kind='discover' AND status IN ('queued','running')"):
+                db.enqueue("discover", {}, priority=2)          # ETH opportunity-discovery pass (train-only discovery, embargoed validation, queue survivors into the funnel)
             nw = max(1, int(Settings.load().n_workers))
             qd = db.q("SELECT SUM(kind='experiment' AND status='queued') e, SUM(kind='plan') p FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]
             if (qd["e"] or 0) < 30 * nw and (qd["p"] or 0) < nw: db.enqueue("plan", {"n": 24}, priority=1)   # keep every worker fed; planning runs on any worker
@@ -98,6 +100,10 @@ def main():
                     db.set("blocker", None)
                     if not plans:
                         time.sleep(1)
+                elif job["kind"] == "discover":
+                    from . import ethdiscovery as ED
+                    res = ED.run_all(db, store, em, symbol=(st.research_symbols or ["ETHUSDT"])[0], budget_s=1200); db.finish_job(job["id"], res)
+                    db.log("info", "discover", f"ETH discovery pass: {res}"); store.c.clear()
                 elif job["kind"] == "refine":
                     from . import refine as RF
                     res = RF.run_batch(db, st, store, em, max_seeds=6, budget_s=240); db.finish_job(job["id"], res)

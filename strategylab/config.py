@@ -17,6 +17,7 @@ def home_dir() -> Path:
 class Settings:
     symbols: list = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     timeframes: list = field(default_factory=lambda: ["5m", "15m", "1h", "4h"])
+    research_symbols: list | None = None   # focus the director on these symbols (others remain loaded as references); None = all of `symbols`
     data_start: str = "2019-09"
     research_end: str = "2026-10-01"   # research (train/val/test) data stops here; later bars are the untouched FORWARD set
     # holdout: final fraction of history never used for selection (touched once per strategy)

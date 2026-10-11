@@ -223,8 +223,8 @@ def test_high_leverage_mode_requires_stop_inside_liquidation_distance(home):
 def test_high_leverage_sizing_grid_is_250_or_500(home):
     from strategylab import capital as CAP
     from strategylab.btcc import get_model
-    em = get_model("user_500x"); assert CAP.HI_LEV_GRID == [250, 500] and max(CAP.HI_RISK_GRID) >= 0.3
-    assert [l for l in CAP.HI_LEV_GRID if l <= em.max_leverage] == [250, 500]
+    em = get_model("user_500x"); assert CAP.HI_LEV_GRID == [25, 50, 100, 250, 500] and max(CAP.HI_RISK_GRID) >= 0.3
+    assert [l for l in CAP.HI_LEV_GRID if l <= em.max_leverage] == [25, 50, 100, 250, 500]
 
 
 def test_limit_execution_model_fills_and_fees():
@@ -315,3 +315,60 @@ def test_ledger_matches_vectorised_simulator():
     blocks = CP.month_blocks(tr, t_out[0], t_out[-1] + 1); idx = np.arange(len(blocks))[None, :]
     sim = CP.simulate(blocks, idx, "BTCUSDT", 0.05, 20, em, start=300.0, wd_target=1e9)
     assert abs((lg["final_equity"] + lg["withdrawn_total"]) - float(sim["wealth"][0])) < 1e-6 * max(1, float(sim["wealth"][0])) + 1e-6
+
+
+def _tape(n=6000, seed=3):
+    import numpy as np, pandas as pd
+    rng = np.random.default_rng(seed); idx = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+    c = 2000 * np.exp(np.cumsum(rng.normal(0, 0.002, n))); o = np.r_[c[0], c[:-1]]
+    hi = np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.0008, n))); lo = np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.0008, n)))
+    return pd.DataFrame(dict(open=o, high=hi, low=lo, close=c, volume=rng.uniform(100, 200, n), quote_volume=rng.uniform(1e5, 2e5, n), count=100, taker_buy_volume=rng.uniform(40, 100, n), funding=0.0), index=idx)
+
+
+def test_opportunity_features_are_causal():
+    import numpy as np
+    from strategylab.features import Features
+    from strategylab import opportunity as OP
+    df = _tape(); ref = _tape(seed=9)
+    A = OP.feature_matrix(Features(df, ref)); cut = 4000
+    B = OP.feature_matrix(Features(df.iloc[:cut], ref))
+    for k in OP.FEATS:
+        a, b = A[k][:cut - 5], B[k][:cut - 5]
+        both = np.isfinite(a) & np.isfinite(b)
+        assert np.allclose(a[both], b[both], rtol=1e-3, atol=1e-4), f"feature {k} changes when future bars are removed"
+        assert np.array_equal(np.isfinite(a), np.isfinite(b)) or k in ("atr_pct",), k
+
+
+def test_triple_barrier_labels_match_hand_computed_path():
+    import numpy as np
+    from strategylab.features import Features
+    from strategylab import opportunity as OP, btcc
+    from dataclasses import replace
+    df = _tape(2000); F = Features(df)
+    em = replace(btcc.get_model("eth_hl"), limit_bars=0, limit_exits=False, min_lev_capable=0)          # market entries: path starts at the next open
+    lb = OP.label(F, "long", 1.0, 2.0, 12, em, 700, 1500, limit=False)
+    o, h, l, c, a = F.o, F.h, F.l, F.c, F.atr(14)
+    for j in (5, 50, 120, 300):
+        t = lb["t"][j]; entry = o[t + 1]; sd = a[t]; stop, tgt = entry - sd, entry + 2 * sd; res = 0
+        for k in range(t + 1, t + 13):
+            if l[k] <= stop: res = -1; break
+            if h[k] >= tgt: res = 1; break
+        if lb["ok"][j]: assert lb["outcome"][j] == res, (j, lb["outcome"][j], res)
+
+
+def test_discovery_never_reads_past_train_and_validation_is_embargoed(monkeypatch):
+    import numpy as np
+    from strategylab.features import Features
+    from strategylab import opportunity as OP, btcc
+    df = _tape(5000); F = Features(df); em = btcc.get_model("eth_hl")
+    seen = []
+    orig = OP.label
+    def spy(F_, side, s_atr, rr, H, em_, lo, hi, limit=True, chunk=40000):
+        seen.append((lo, hi)); return orig(F_, side, s_atr, rr, H, em_, lo, hi, limit, chunk)
+    monkeypatch.setattr(OP, "label", spy)
+    bounds = {"train": (0, 2500), "val": (2500, 3750), "test": (3750, 5000)}
+    fins, meta = OP.discover(F, "15m", em, bounds, "long", 0.01, 2.0, 12)
+    assert seen and max(h for _, h in seen) <= 2500 - 12 - 6                      # train labels end H+fill bars before the boundary (purge)
+    if fins:
+        seen.clear(); OP.predict(F, "15m", em, bounds, fins[0], meta)
+        assert min(l for l, _ in seen) >= 2500 + 12 and max(h for _, h in seen) <= 3750        # validation starts H bars after the boundary and never touches the test

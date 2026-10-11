@@ -87,6 +87,10 @@ PRESETS = {
     # Passive-execution variant: limit entries/targets (maker fee, fill only when price trades through), taker stops. Fees: VIP0 maker 0.03% (conservative end of the conflicting 0.02-0.03%), taker 0.06%.
     "user_500x_maker": ExchangeModel(name="BTCC 250-500x (user-asserted; limit entries/targets, taker stops)", taker_fee=0.0006, maker_fee=0.0003, max_leverage=500, maint_margin_rate=0.001,
                                      liq_fee=0.001, high_leverage=True, min_lev_capable=250, limit_bars=3, limit_exits=True),
+    # ETH-focus research model (Phase 4): up to 500x available, but NO forced minimum leverage - the account simulator chooses 25..500x per candidate and
+    # simulates liquidation (stop vs liquidation distance) explicitly, so lower leverage is allowed to win when higher leverage cannot survive execution.
+    "eth_hl": ExchangeModel(name="BTCC ETH high-leverage research (user-asserted 500x, unverified; passive fills, taker stops)", taker_fee=0.0006, maker_fee=0.0003, max_leverage=500,
+                            maint_margin_rate=0.001, liq_fee=0.001, high_leverage=True, min_lev_capable=0, limit_bars=3, limit_exits=True),
 }
 
 

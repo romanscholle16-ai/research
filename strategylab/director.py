@@ -47,12 +47,13 @@ class Director:
         self.db.set("dead_cells", dict(ts=now, cells=dead)); return {tuple(k.split("|")) for k in dead}
 
     def arms(self):
-        dead = self.dead_cells(); cells = [c for c in self.store.available() if c not in dead] or self.store.available(); out = {}
+        dead = self.dead_cells(); focus = set(getattr(self.st, "research_symbols", None) or [])      # primary research instrument(s); other symbols stay loaded only as references
+        cells = [c for c in self.store.available() if c not in dead and (not focus or c[0] in focus)] or self.store.available(); out = {}
         reg = {(r["family"], r["symbol"], r["timeframe"]): r for r in self.db.q(
             """SELECT family, symbol, timeframe, COUNT(*) n, SUM(best_stage>=1) screened, SUM(best_stage>=3) vpass, SUM(n_variants) variants
                FROM hyp_registry GROUP BY 1,2,3""")}
         secs = self._secs_per_hypothesis()
-        for fam in ST.FAMILIES:
+        for fam in [f for f, v in ST.FAMILIES.items() if not v.get("internal")]:
             for (sy, tf) in cells:
                 it = self.store.get(sy, tf); req = ST.FAMILIES[fam]["requires"]
                 if ("ref" in req and it["F"].ref is None) or ("funding" in req and not it["meta"].get("has_funding")): continue      # engine would skip these jobs: never plan them

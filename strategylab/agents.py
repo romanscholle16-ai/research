@@ -91,7 +91,7 @@ class ResearchScientist:
         """Ask Claude for novel, falsifiable variants expressed in the strategy DSL. Output is DATA only: strictly schema-validated,
         never executed as code, then run through the identical deterministic pipeline (the AI cannot alter any result)."""
         if not self.router: return []
-        fams = {f: v["space"] for f, v in ST.FAMILIES.items() if f != "session_drift"}
+        fams = {f: v["space"] for f, v in ST.FAMILIES.items() if f != "session_drift" and not v.get("internal")}
         sys_p = "You are a quantitative crypto-futures researcher. Reply with ONLY a JSON list. No prose."
         prompt = (f"Propose up to {k} NOVEL, falsifiable strategy variants for BTCUSDT/ETHUSDT perpetuals using ONLY these families and parameter grids:\n"
                   f"{json.dumps(fams)}\nExit params: stop_atr in [1,1.5,2,3], target_rr in [0,1,1.5,2,3], max_hold in [12,24,48,96], side in long/short/both. "
@@ -241,7 +241,7 @@ class Supervisor:
         rng = np.random.default_rng(1000 + counter)
         stats = self.mem.cell_stats(); N = sum(v[0] for v in stats.values()) + 1
         jobs = []; seen_now = set()
-        fams = [f for f in ST.FAMILIES]
+        fams = [f for f, v in ST.FAMILIES.items() if not v.get("internal")]
         # cells whose tests keep failing the frequency / cost / economics screens are de-prioritised (1% probes remain)
         from .feasibility import classify
         cell_n, cell_bad = {}, {}

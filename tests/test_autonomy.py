@@ -42,6 +42,9 @@ def test_100_cycle_autonomy_with_failures_and_restart(home):
         # an orphan worker may survive if it was not in the group; make sure nothing is writing
         assert db.q("SELECT COUNT(*) n FROM jobs WHERE status='running'")[0]["n"] >= 0
         (home / "service.pid").unlink(missing_ok=True)
+        if not db.q("SELECT 1 FROM jobs WHERE status='running'"):      # whether the SIGKILL lands mid-job is random: make the interrupted-job condition deterministic
+            db.enqueue("plan", {"n": 2}, priority=1)
+            assert db.claim_job() is not None
         p = start_service(home, {"STRATEGYLAB_FAULTS": faults})           # "reboot": control state persisted as 'running'
         assert wait_for(lambda: db.get("cycles", 0) >= c1 + 100, 200), "did not resume after restart"
         total = db.get("cycles", 0)

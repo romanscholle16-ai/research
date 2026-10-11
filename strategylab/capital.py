@@ -179,7 +179,7 @@ def evaluate(tr: Trades, t0, t1, symbol, risk_frac, leverage, em=DEFAULT, margin
 RISK_GRID = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12]
 LEV_GRID = [5, 10, 20, 50]
 HI_RISK_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]      # high-leverage mode (user accepts higher ruin risk)
-HI_LEV_GRID = [250, 500]                            # the strategy must work at 250x or 500x
+HI_LEV_GRID = [25, 50, 100, 250, 500]               # high-leverage mode: compare identical signals across leverage; liquidation is simulated at each level
 
 
 def optimize_risk(tr, t0, t1, symbol, em=DEFAULT, max_ruin=0.05, paths=600, seed=7, margins=("isolated", "cross"), max_lose50=0.35):
