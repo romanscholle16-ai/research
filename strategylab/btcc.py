@@ -26,6 +26,8 @@ class ExchangeModel:
     min_qty: dict = None            # contract min quantity (base units)
     funding_interval_h: int = 8
     cost_mult: float = 1.0          # for cost-sensitivity analysis
+    high_leverage: bool = False     # user-directed mode: strategies must be sizeable at min_lev_capable..max_leverage (250x/500x) with liquidation modelled
+    min_lev_capable: int = 0
 
     def minq(self, symbol):
         return (self.min_qty or {"BTCUSDT": 0.001, "ETHUSDT": 0.01}).get(symbol, 0.01)
@@ -61,6 +63,10 @@ PRESETS = {
     "conservative": ExchangeModel(),                                                   # default: taker 0.06%
     "listed_vip0": ExchangeModel(name="BTCC (listed VIP0 fee guide)", taker_fee=0.00048, maker_fee=0.0003),
     "adverse": ExchangeModel(name="BTCC (adverse)", taker_fee=0.0006, half_spread=0.0002, slippage=0.0004, stop_slippage=0.0008),
+    # USER-ASSERTED 500x availability (not verified by us): maintenance margin 0.1% and liquidation fee 0.1% are ASSUMPTIONS; the stop must fit inside the liquidation distance at 250x.
+    "user_500x": ExchangeModel(name="BTCC 250-500x (user-asserted, unverified; conservative fees)", max_leverage=500, maint_margin_rate=0.001, liq_fee=0.001, high_leverage=True, min_lev_capable=250),
+    "user_500x_listed": ExchangeModel(name="BTCC 250-500x (user-asserted; listed VIP0 taker 0.048%, tighter slippage)", taker_fee=0.00048, maker_fee=0.0003, half_spread=0.00005,
+                                      slippage=0.0001, stop_slippage=0.0003, max_leverage=500, maint_margin_rate=0.001, liq_fee=0.001, high_leverage=True, min_lev_capable=250),
 }
 
 

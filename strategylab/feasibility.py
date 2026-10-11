@@ -79,12 +79,14 @@ def stage_a(F, spec, bounds, em, st, sig=None):
     out.update(required_monthly_return=round(r_req, 3), round_trip_cost=round(c_rt, 5), stop_frac_median=round(stop_med, 5) if stop_med == stop_med else None)
     if stop_med == stop_med and stop_med > 0:
         cost_R = c_rt / stop_med
-        rf_eff = min(RF_MAX, 0.8 * LEV_CAP * stop_med)           # risk share is capped by the leverage ceiling
+        lev_cap = em.max_leverage if getattr(em, 'high_leverage', False) else LEV_CAP; rf_max = 0.5 if getattr(em, 'high_leverage', False) else RF_MAX
+        rf_eff = min(rf_max, 0.8 * lev_cap * stop_med)           # risk share is capped by the leverage ceiling
         lev_needed = rf_eff / stop_med
         n_m = max(out["trades_month_expected"], 1e-9)
         e_req = r_req / (n_m * rf_eff)
         g_need = cost_R + e_req
         out.update(cost_R=round(cost_R, 3), rf_eff=round(rf_eff, 4), leverage_needed=round(lev_needed, 1), required_net_expectancy_R=round(e_req, 3), required_gross_edge_R=round(g_need, 3))
+        if getattr(em, 'min_lev_capable', 0) and stop_med > 0.8 * em.liq_distance(em.min_lev_capable): reasons.append("not_leverage_capable")
         if cost_R > 0.5 * G_MAX: reasons.append("cost_infeasible")                 # costs alone eat > 40% of the believable edge
         elif g_need > G_MAX and "insufficient_frequency" not in reasons: reasons.append("infeasible_for_target")
         out["research_only"] = bool("infeasible_for_target" not in reasons and g_need > 0.6 * G_MAX)   # passes, but only just
@@ -103,7 +105,7 @@ FAILURE_CLASS = {
     "excess_ruin_risk_test": "economic_infeasibility", "excess_ruin_risk_all": "economic_infeasibility", "excess_drawdown_test": "economic_infeasibility", "excess_drawdown_all": "economic_infeasibility",
     "no_edge": "no_edge", "statistically_insignificant": "no_edge", "poor_risk_reward": "no_edge", "no_alpha_vs_random_entries": "no_edge", "fails_out_of_sample": "no_edge", "fails_locked_test": "no_edge",
     "unstable_parameters_overfit": "instability", "regime_dependent_or_unstable": "instability", "fails_walk_forward": "instability", "single_regime_dependence": "instability", "depends_on_few_trades": "instability",
-    "cost_infeasible_precheck": "costs", "noise_neighbourhood": "duplicate", "exit_variant_limit": "duplicate",
+    "cost_infeasible_precheck": "costs", "not_leverage_capable": "costs", "noise_neighbourhood": "duplicate", "exit_variant_limit": "duplicate",
     "look_ahead_bias": "invalid", "fails_multiple_testing": "multiple_testing", "near_duplicate_failed_hypothesis": "duplicate",
 }
 
@@ -136,7 +138,10 @@ def precheck_cost(F, spec, bounds, em):
     lo, hi = bounds["train"]; af = F.atr_frac_med(lo, hi, spec.get("atr_n", 14))
     if not (af == af and af > 0): return dict(ok=True, cost_R_est=None)
     c_rt = round_trip_cost(em); cost_R = c_rt / (spec["stop_atr"] * af)
-    return dict(ok=cost_R <= 0.5 * G_MAX * 1.25, cost_R_est=round(cost_R, 3), stop_frac_est=round(spec["stop_atr"] * af, 5))
+    sf = spec["stop_atr"] * af
+    if getattr(em, "min_lev_capable", 0) and sf > 0.8 * em.liq_distance(em.min_lev_capable):
+        return dict(ok=False, reason="not_leverage_capable", cost_R_est=round(cost_R, 3), stop_frac_est=round(sf, 5))     # stop would sit beyond the liquidation price at 250x
+    return dict(ok=cost_R <= 0.5 * G_MAX * 1.25, cost_R_est=round(cost_R, 3), stop_frac_est=round(sf, 5))
 
 
 def hyp_keys(spec, symbol, tf):

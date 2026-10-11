@@ -170,7 +170,7 @@ def final_stage(F, spec, bounds, em, st, symbol, n_tested, tr_trainval):
     out = {}; reasons = []
     tlo, _ = bounds["train"]; _, vhi = bounds["val"]; elo, ehi = bounds["test"]
     t_tv0, t_tv1 = float(F.epoch_s[tlo]), float(F.epoch_s[vhi - 1])
-    best, table = CAP.optimize_risk(tr_trainval, t_tv0, t_tv1, symbol, em, st.max_ruin_prob)
+    best, table = CAP.optimize_risk(tr_trainval, t_tv0, t_tv1, symbol, em, st.max_ruin_prob, max_lose50=st.max_lose50_prob)
     if best is None: return out, ["insufficient_history_for_capital_sim"], None
     out["sizing_fit_on_train_val"] = best
     test = run(F, spec, em, elo, ehi); mt = metrics(test); out["test"] = mt

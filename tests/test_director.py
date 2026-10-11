@@ -208,3 +208,20 @@ def test_down_regime_gate_rejects_bull_only_edge():
     wf = dict(k=2, folds=[(60, 0.2), (60, -0.15)])                                   # strategy earns only in the bull half
     dr = down_regime_check(f, wf, 0, n); assert dr["checked"] and dr["mean_R"] < 0
     wf2 = dict(k=2, folds=[(60, 0.2), (60, 0.10)]); assert down_regime_check(f, wf2, 0, n)["mean_R"] > 0
+
+
+def test_high_leverage_mode_requires_stop_inside_liquidation_distance(home):
+    from strategylab.btcc import get_model
+    st, db, store = setup(home); em = get_model("user_500x"); it = store.get("BTCUSDT", "1h")
+    assert em.high_leverage and em.max_leverage == 500 and em.min_lev_capable == 250
+    liq = em.liq_distance(250); assert 0.002 < liq < 0.004                          # ~0.3% of price at 250x
+    wide = FE.precheck_cost(it["F"], tspec(stop_atr=3.0), it["bounds"], em)         # 1h bars are far noisier than 0.24% => stop beyond liquidation
+    assert not wide["ok"] and wide["reason"] == "not_leverage_capable"
+    assert get_model("conservative").liq_distance(100) > 0 and not get_model("conservative").high_leverage
+
+
+def test_high_leverage_sizing_grid_is_250_or_500(home):
+    from strategylab import capital as CAP
+    from strategylab.btcc import get_model
+    em = get_model("user_500x"); assert CAP.HI_LEV_GRID == [250, 500] and max(CAP.HI_RISK_GRID) >= 0.3
+    assert [l for l in CAP.HI_LEV_GRID if l <= em.max_leverage] == [250, 500]

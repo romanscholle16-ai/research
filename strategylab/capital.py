@@ -131,9 +131,11 @@ def evaluate(tr: Trades, t0, t1, symbol, risk_frac, leverage, em=DEFAULT, margin
 
 RISK_GRID = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12]
 LEV_GRID = [5, 10, 20, 50]
+HI_RISK_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]      # high-leverage mode (user accepts higher ruin risk)
+HI_LEV_GRID = [250, 500]                            # the strategy must work at 250x or 500x
 
 
-def optimize_risk(tr, t0, t1, symbol, em=DEFAULT, max_ruin=0.05, paths=600, seed=7, margins=("isolated", "cross")):
+def optimize_risk(tr, t0, t1, symbol, em=DEFAULT, max_ruin=0.05, paths=600, seed=7, margins=("isolated", "cross"), max_lose50=0.35):
     """Pick (risk_frac, leverage, margin) maximising P(monthly capacity >= $1000 in horizon) s.t. ruin<=max_ruin and P(lose50%)<=0.35.
     Fitted ONLY on the trades/period passed in (never on the locked test period)."""
     best = None; table = []
@@ -141,13 +143,13 @@ def optimize_risk(tr, t0, t1, symbol, em=DEFAULT, max_ruin=0.05, paths=600, seed
     if len(blocks) < 2: return None, table
     rng = np.random.default_rng(seed); idx = rng.integers(0, len(blocks), size=(paths, 6))
     for m in margins:
-        for r in RISK_GRID:
-            for L in LEV_GRID:
+        for r in (HI_RISK_GRID if em.high_leverage else RISK_GRID):
+            for L in ([l for l in HI_LEV_GRID if l <= em.max_leverage] if em.high_leverage else LEV_GRID):
                 s = summarize(simulate(blocks, idx, symbol, r, L, em, m), 300.0, 1000.0)
                 row = dict(risk=r, lev=L, margin=m, p1000=s["monthly_withdraw_any"]["1000"]["p"], ruin=s["ruin"]["p"],
                            lose50=s["lose_50pct"]["p"], med=s["final_wealth_pct"]["50"])
                 table.append(row)
-                feas = row["ruin"] <= max_ruin and row["lose50"] <= 0.35
+                feas = row["ruin"] <= max_ruin and row["lose50"] <= max_lose50
                 key = (feas, row["p1000"], row["med"])
                 if best is None or key > best[0]: best = (key, row)
     return best[1], table

@@ -95,7 +95,7 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
     pc = FE.precheck_cost(F, spec, bounds, em); pre["cost"] = pc
     ok_n, why_n = FE.novelty_check(db, spec, symbol, tf)
     if not pc["ok"] or not ok_n:
-        why = ["cost_infeasible_precheck"] if not pc["ok"] else [why_n]
+        why = [pc.get("reason", "cost_infeasible_precheck")] if not pc["ok"] else [why_n]
         summary["eligibility"] = dict(decision="reject", reasons=why, failure_class=FE.classify(why), **pre, precheck=True)
         record("eligibility", "fail", summary["eligibility"], why)
         return finish("REJECTED", why)
