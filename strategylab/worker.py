@@ -72,12 +72,20 @@ def main():
                 maybe_inject(db, job["kind"])
                 if job["kind"] == "plan":
                     ai_ok = db.get("ai_enabled", True)
+                    sup.maybe_queue_portfolio()
                     plans = sup.plan(job["payload"].get("n", 8), use_ai=ai_ok)
                     for p in plans: db.enqueue("experiment", p, priority=5)
                     db.finish_job(job["id"], {"planned": len(plans)})
                     db.set("blocker", None)
                     if not plans:
                         time.sleep(1)
+                elif job["kind"] == "recheck":
+                    from .engine import recheck_placebo
+                    db.finish_job(job["id"], recheck_placebo(db, st, store, job["payload"]))
+                elif job["kind"] == "portfolio":
+                    from .portfolio import run_portfolio
+                    res = run_portfolio(db, st, store, hb=lambda: db.heartbeat(job["id"])); db.finish_job(job["id"], res)
+                    db.log("info", "portfolio", f"portfolio build: {res}")
                 elif job["kind"] == "experiment":
                     res = run_experiment(db, st, store, job["payload"], hb=lambda: db.heartbeat(job["id"]))
                     db.finish_job(job["id"], res)

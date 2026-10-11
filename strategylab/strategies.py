@@ -130,6 +130,25 @@ def sig_leadlag(F, p):
     return (rr > thr) & (own < rr * 0.5), (rr < -thr) & (own > rr * 0.5)
 
 
+def sig_vwap(F, p):
+    d = F.vwap_dev(); ok = F.hour >= p["min_hour"]   # let the session VWAP mature before fading
+    return (d < -p["k"]) & ok, (d > p["k"]) & ok
+
+
+def sig_nr(F, p):
+    """Crabel narrow-range: after the narrowest range of n bars, trade the break of that bar's extreme."""
+    import pandas as pd
+    rng = F.h - F.l; nr = rng == pd.Series(rng).rolling(p["n"]).min().to_numpy()
+    sh = lambda a: np.r_[np.zeros(1, a.dtype), a[:-1]]
+    prev_nr = sh(nr); ph, pl = np.r_[np.nan, F.h[:-1]], np.r_[np.nan, F.l[:-1]]
+    return prev_nr & (F.c > ph), prev_nr & (F.c < pl)
+
+
+def sig_ratio(F, p):
+    z = F.ratio_z(p["n"])
+    return z < -p["k"], z > p["k"]
+
+
 FAMILIES = {
     "donchian_breakout": dict(fn=sig_donchian, space={"n": [20, 40, 80, 160], "trend_n": [0, 100, 200]}, requires=[],
         text="Range breakouts continue because stop clusters beyond ranges trigger forced order flow.",
@@ -183,6 +202,18 @@ FAMILIES = {
         text="Trend-following edge is concentrated in specific volatility regimes.",
         why="Regime-dependence of momentum: trends need volatility expansion to pay costs.",
         falsify="Regime-filtered trend does not beat unfiltered trend OOS."),
+    "vwap_reversion": dict(fn=sig_vwap, space={"k": [1.0, 1.5, 2.0, 3.0], "min_hour": [4, 8, 12]}, requires=[],
+        text="Price stretched far from the intraday (UTC-session) VWAP reverts toward it.",
+        why="VWAP is the benchmark for institutional execution; deviations attract mean-reverting algorithmic flow.",
+        falsify="Stretch-from-VWAP bars show no reversion drift after costs."),
+    "narrow_range_breakout": dict(fn=sig_nr, space={"n": [4, 7, 10]}, requires=[],
+        text="The narrowest bar of a recent window precedes directional expansion (Crabel NR4/NR7).",
+        why="Range contraction signals inventory balance; resolution is directional and volatility clusters.",
+        falsify="Break of an NR bar is no more directional than any other bar."),
+    "eth_btc_ratio_reversion": dict(fn=sig_ratio, space={"n": [100, 250, 500], "k": [1.5, 2.0, 2.5]}, requires=["ref"],
+        text="The ETH/BTC log-ratio mean-reverts; trade the relatively cheap asset long and the rich asset short.",
+        why="Cross-asset relative value: shared beta factor, idiosyncratic flows are transient.",
+        falsify="Extreme ratio z-scores are not followed by convergence."),
     "cross_asset_leadlag": dict(fn=sig_leadlag, space={"n": [1, 2, 4], "thr_atr": [0.5, 1.0, 1.5]}, requires=["ref"],
         text="BTC leads ETH (and vice versa) at short horizons; laggard catches up.",
         why="Information is priced first in the most liquid instrument; arbitrageurs equilibrate with delay.",

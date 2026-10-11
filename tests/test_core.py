@@ -150,3 +150,26 @@ def test_live_trading_disabled_and_no_order_code():
     import pathlib, re
     src = "\n".join(p.read_text() for p in pathlib.Path(config.__file__).parent.glob("*.py"))
     assert not re.search(r"(?i)\b(new_order|place_order|create_order|withdraw_funds|/fapi/v1/order)\b", src)
+
+
+def test_placebo_flags_beta_but_not_real_edge():
+    from strategylab.validation import placebo_test
+    spec = dict(family="tsmom", params=dict(lookback=12, thr_atr=0.25), side="both", stop_atr=2, target_rr=0, max_hold=24, atr_n=14, filters=[])
+    rng = np.random.default_rng(0)
+    noise = D.synthetic(n=30000, seed=11)[0]                         # no edge -> placebo p should not be tiny
+    pn = placebo_test(Features(noise), spec, ExchangeModel(), 600, 29000, rng, n=60)
+    edge = D.synthetic(n=30000, seed=11, with_edge=True, edge=0.4)[0]  # genuine serial correlation -> small p
+    pe = placebo_test(Features(edge), spec, ExchangeModel(), 600, 29000, rng, n=60)
+    assert pe["p"] < 0.1 and pe["actual"] > pn["actual"]
+
+
+def test_portfolio_concurrency_scaling_and_combined_trades():
+    from strategylab.portfolio import concurrency_scale
+    mk = lambda a, b: B.Trades(t_in=[a], t_out=[b], dir=[1], entry=[1], ret=[0.01], fee=[0], fund=[0], stop_frac=[0.01], mae=[0], adv_exit=[0], reason=[1], bars=[1])
+    tr = concurrency_scale(B.Trades.concat([mk(0, 100), mk(50, 150), mk(200, 300)]))
+    assert list(tr.scale) == [1.0, 0.5, 1.0]
+
+
+def test_new_families_have_rationale_and_are_registered():
+    for f in ("vwap_reversion", "narrow_range_breakout", "eth_btc_ratio_reversion"):
+        assert f in ST.FAMILIES and ST.FAMILIES[f]["falsify"]

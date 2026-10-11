@@ -17,10 +17,11 @@ REASONS = {0: "stop", 1: "target", 2: "time", 3: "end"}
 
 
 class Trades:
-    FIELDS = ("t_in", "t_out", "dir", "entry", "ret", "fee", "fund", "stop_frac", "mae", "adv_exit", "reason", "bars")
+    FIELDS = ("t_in", "t_out", "dir", "entry", "ret", "fee", "fund", "stop_frac", "mae", "adv_exit", "reason", "bars", "scale")
 
     def __init__(self, **kw):
         for f in self.FIELDS: setattr(self, f, np.asarray(kw.get(f, []), float))
+        if len(self.scale) != len(self.t_in): self.scale = np.ones(len(self.t_in))   # risk scale (1 = standalone)
 
     def __len__(self): return len(self.t_in)
 
@@ -103,7 +104,7 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
         if reason == 0: adv_exit = max(0.0, -ret)
         mae = max(mae, adv_exit)
         fund = d * (fc[j_exit] - fc[e])  # long pays positive funding
-        rows.append((ts[e], ts[j_exit], d, entry, ret, 2 * fee, fund, stop_frac, mae, adv_exit, reason, j_exit - e + 1))
+        rows.append((ts[e], ts[j_exit], d, entry, ret, 2 * fee, fund, stop_frac, mae, adv_exit, reason, j_exit - e + 1, 1.0))
         free = j_exit  # next signal may be evaluated at close of the exit bar
     if not rows: return Trades()
     arr = np.array(rows, float)

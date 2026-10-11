@@ -93,6 +93,25 @@ def sensitivity(F, spec, em, lo, hi, rng):
                 median=float(np.median(vals)) if vals else 0.0, base=b)
 
 
+def placebo_test(F, spec, em, lo, hi, rng, n=100):
+    """Random-entry benchmark: same side mix, same signal density, same stop/target/hold structure, same costs.
+    Controls for market beta and exit-rule artefacts: p = P(random-entry mean R >= strategy mean R)."""
+    L, S = ST.signals(F, spec)
+    act = backtest(F, spec, L, S, em, lo, hi)
+    if len(act) < 20: return dict(p=1.0, actual=0.0, placebo_mean=0.0, n=0)
+    pl, ps = L[lo:hi].mean(), S[lo:hi].mean(); size = F.n; vals = []
+    for _ in range(n):
+        Lr = np.zeros(size, bool); Sr = np.zeros(size, bool)
+        Lr[lo:hi] = rng.random(hi - lo) < pl; Sr[lo:hi] = rng.random(hi - lo) < ps
+        Lr[:600] = False; Sr[:600] = False
+        t = backtest(F, spec, Lr, Sr, em, lo, hi)
+        if len(t) >= 10: vals.append(t.R.mean())
+    a = float(act.R.mean())
+    if len(vals) < n // 2: return dict(p=1.0, actual=a, placebo_mean=0.0, n=len(vals))
+    p = (sum(v >= a for v in vals) + 1) / (len(vals) + 1)
+    return dict(p=float(p), actual=a, placebo_mean=float(np.mean(vals)), n=len(vals))
+
+
 def validate(F, spec, bounds, em, st, tr_train, rng):
     out = {}; reasons = []
     vlo, vhi = bounds["val"]; tlo, _ = bounds["train"]
@@ -111,6 +130,9 @@ def validate(F, spec, bounds, em, st, tr_train, rng):
     if out["cost_1.5x"] <= 0: reasons.append("cost_sensitive")
     la = lookahead_test(F.df, spec, ref=F.ref); out["lookahead"] = la
     if not la["passed"]: reasons.append("look_ahead_bias")
+    if not reasons:
+        pb = placebo_test(F, spec, em, tlo, vhi, rng); out["placebo"] = pb
+        if pb["p"] > 0.15: reasons.append("no_alpha_vs_random_entries")
     return out, reasons, trv
 
 

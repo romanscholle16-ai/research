@@ -97,3 +97,24 @@ def run_experiment(db, st, store: DataStore, payload: dict, hb=lambda: None, em=
     status = V.qualification_status(stage_reasons)
     if status == "BACKTEST_QUALIFIED": db.log("info", "qualify", f"{sid} {symbol} {tf} BACKTEST_QUALIFIED (synthetic={bool(syn)})")
     return finish(status, rs)
+
+
+def recheck_placebo(db, st, store, payload, em=DEFAULT):
+    """Apply the random-entry (beta-control) gate to a strategy that was promoted before the gate existed."""
+    sid, symbol, tf = payload["strategy_id"], payload["symbol"], payload["timeframe"]
+    r = db.q("SELECT ss.status, ss.summary_json sj, s.spec_json sp FROM strategy_status ss JOIN strategies s ON s.id=ss.strategy_id WHERE ss.strategy_id=? AND ss.symbol=? AND ss.timeframe=?", (sid, symbol, tf))
+    if not r or r[0]["status"] == "REJECTED": return {"skipped": "n/a"}
+    sm = json.loads(r[0]["sj"]); spec = json.loads(r[0]["sp"])
+    if "placebo" in sm.get("validate", {}): return {"skipped": "already_checked"}
+    item = store.get(symbol, tf); F, b = item["F"], item["bounds"]
+    rng = np.random.default_rng(int(ST.spec_hash(spec), 16) % 2**32)
+    pb = V.placebo_test(F, spec, em, b["train"][0], b["val"][1], rng)
+    sm.setdefault("validate", {})["placebo"] = pb
+    status = r[0]["status"]
+    if pb["p"] > 0.15:
+        status = "REJECTED"; sm["reasons"] = ["no_alpha_vs_random_entries"] + [x for x in sm.get("reasons", []) if x != "no_alpha_vs_random_entries"]
+        db.x("INSERT INTO lessons(ts,family,symbol,timeframe,reasons,strategy_id) VALUES(?,?,?,?,?,?)", (time.time(), spec["family"], symbol, tf, json.dumps(["no_alpha_vs_random_entries"]), sid))
+    db.x("UPDATE strategy_status SET status=?, summary_json=?, updated=? WHERE strategy_id=? AND symbol=? AND timeframe=?", (status, json.dumps(sm, default=float), time.time(), sid, symbol, tf))
+    db.x("INSERT INTO experiments(strategy_id,stage,symbol,timeframe,dataset_id,started,finished,status,metrics_json,failure_reasons,synthetic) VALUES(?,?,?,?,?,?,?,?,?,?,0)",
+         (sid, "recheck_placebo", symbol, tf, item["meta"]["id"], time.time(), time.time(), "fail" if status == "REJECTED" else "pass", json.dumps(pb), json.dumps([] if status != "REJECTED" else ["no_alpha_vs_random_entries"])))
+    return {"strategy_id": sid, "status": status, "placebo_p": pb["p"]}

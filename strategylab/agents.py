@@ -156,7 +156,11 @@ class EvolutionSpecialist:
             if r["st"] == "PROMISING": sc += 3
             if sc > 0.5: scored.append((sc, r))
         scored.sort(key=lambda x: -x[0])
-        return scored[:limit]
+        per, out = {}, []
+        for sc, r in scored:                      # diversity: at most 4 parents per family so one family cannot flood the search
+            fam = json.loads(r["spec"])["family"]
+            if per.get(fam, 0) < 4: per[fam] = per.get(fam, 0) + 1; out.append((sc, r))
+        return out[:limit]
 
     def mutate(self, row, rng):
         spec = json.loads(row["spec"]); sym, tf = row["sy"], row["tf"]; sm = json.loads(row["sj"])
@@ -190,6 +194,13 @@ class Supervisor:
         self.mem = Memory(db); self.sci = ResearchScientist(db, router); self.inv = StrategyInventor(db, self.mem)
         self.evo = EvolutionSpecialist(db, self.mem)
 
+    def maybe_queue_portfolio(self):
+        """Rebuild portfolios whenever the pool of validated strategies has grown by >=20 (never more than hourly)."""
+        n = self.db.q("SELECT COUNT(*) n FROM trades WHERE symbol!='MULTI'")[0]["n"]
+        last = self.db.get("portfolio_pool_n", 0); lt = self.db.get("portfolio_last_ts", 0)
+        if n >= max(10, last + 20) and time.time() - lt > 3600:
+            self.db.set("portfolio_pool_n", n); self.db.set("portfolio_last_ts", time.time()); self.db.enqueue("portfolio", {}, priority=2)
+
     def plan(self, n=8, use_ai=True) -> list[dict]:
         self.sci.seed_catalog()
         cells = self.store.available()
@@ -199,9 +210,12 @@ class Supervisor:
         stats = self.mem.cell_stats(); N = sum(v[0] for v in stats.values()) + 1
         jobs = []; seen_now = set()
         fams = [f for f in ST.FAMILIES]
+        crowd = {}
+        for (f_, s_, t_), (n_, d_) in stats.items(): crowd[f_] = crowd.get(f_, 0) + n_
         def ucb(f, s, tf):
             a = stats.get((f, s, tf), [0, 0.0])
-            return 5.0 + rng.random() if a[0] == 0 else a[1] / a[0] + 0.6 * math.sqrt(math.log(N + 1) / a[0]) + 0.1 * rng.random()
+            pen = min(1.5, 0.15 * math.log1p(crowd.get(f, 0) / 50.0))     # crowding penalty keeps the search diverse
+            return 5.0 + rng.random() if a[0] == 0 else a[1] / a[0] + 0.6 * math.sqrt(math.log(N + 1) / a[0]) + 0.1 * rng.random() - pen
         near = self.evo.near_misses() if N > 30 else []
         if use_ai:
             try:

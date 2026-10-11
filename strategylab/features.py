@@ -104,3 +104,22 @@ class Features:
             rc = self.ref["close"].reindex(self.df.index)
             return (rc / rc.shift(n) - 1).to_numpy()
         return self._memo(("rref", n), f)
+
+    def vwap_dev(self):
+        """(close - session VWAP)/ATR, session = UTC day, cumulative up to and including this bar (causal)."""
+        def f():
+            day = self.epoch_s // 86400
+            qv = pd.Series(self.df["quote_volume"].to_numpy()).groupby(day).cumsum()
+            v = pd.Series(self.v).groupby(day).cumsum()
+            vw = (qv / v.replace(0, np.nan)).to_numpy()
+            return (self.c - vw) / self.atr(14)
+        return self._memo("vwapdev", f)
+
+    def ratio_z(self, n):
+        """z-score of own/reference price ratio (cross-asset relative value)."""
+        def f():
+            if self.ref is None: return np.full(self.n, np.nan)
+            rc = self.ref["close"].reindex(self.df.index).to_numpy()
+            r = pd.Series(np.log(self.c / rc))
+            return ((r - r.rolling(n).mean()) / r.rolling(n).std()).to_numpy()
+        return self._memo(("ratioz", n), f)

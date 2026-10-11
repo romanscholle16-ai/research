@@ -33,15 +33,15 @@ def month_blocks(tr: Trades, t0: float, t1: float):
     blocks = []
     for k in range(k0, k1 + 1):
         m = keys == k
-        blocks.append({f: getattr(tr, f)[m] for f in ("net", "stop_frac", "mae", "entry", "bars")} if len(tr) else
-                      {f: np.array([]) for f in ("net", "stop_frac", "mae", "entry", "bars")})
+        blocks.append({f: getattr(tr, f)[m] for f in ("net", "stop_frac", "mae", "entry", "bars", "scale")} if len(tr) else
+                      {f: np.array([]) for f in ("net", "stop_frac", "mae", "entry", "bars", "scale")})
         blocks[-1]["net"] = (tr.net[m] if len(tr) else np.array([]))
     return blocks
 
 
 def _pad(blocks):
     K = max(1, max(len(b["net"]) for b in blocks))
-    fl = ("net", "stop_frac", "mae", "entry")
+    fl = ("net", "stop_frac", "mae", "entry", "scale")
     M = {f: np.zeros((len(blocks), K)) for f in fl}; mask = np.zeros((len(blocks), K), bool)
     for i, b in enumerate(blocks):
         k = len(b["net"]); mask[i, :k] = True
@@ -63,8 +63,9 @@ def simulate(blocks, idx, symbol, risk_frac, leverage, em: ExchangeModel = DEFAU
         for k in range(M["net"].shape[1]):
             valid = mask[sel, k]
             if not valid.any(): continue
-            net, sf, mae, px = (M[f][sel, k] for f in ("net", "stop_frac", "mae", "entry"))
-            notional = (risk_frac * eq) / (sf + fee_buf)
+            net, sf, mae, px, sc = (M[f][sel, k] for f in ("net", "stop_frac", "mae", "entry", "scale"))
+            sc = np.where(sc > 0, sc, 1.0)
+            notional = (risk_frac * sc * eq) / (sf + fee_buf)
             maxn = leverage * eq * 0.95
             notional = np.minimum(notional, maxn)
             px = np.where(px > 0, px, 1.0)
