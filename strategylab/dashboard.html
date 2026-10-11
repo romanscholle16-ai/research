@@ -1,0 +1,75 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StrategyLab</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2330;--mut:#6b7587;--line:#e3e6ec;--ac:#2557d6;--ok:#16794a;--warn:#b26a00;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#10131a;--card:#181c26;--fg:#e8ebf2;--mut:#98a2b6;--line:#2a3040;--ac:#7aa2ff;--ok:#4cc38a;--warn:#e0a040;--bad:#ff7b72}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+h1{font-size:18px;margin:0}main{padding:16px 20px;display:grid;gap:14px;max-width:1300px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.k{color:var(--mut);font-size:12px}.v{font-size:22px;font-weight:600}
+button{border:1px solid var(--line);background:var(--card);color:var(--fg);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px}
+button.p{background:var(--ac);color:#fff;border-color:var(--ac)}button:hover{filter:brightness(.95)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--mut);font-weight:500}
+tr.c{cursor:pointer}tr.c:hover{background:var(--bg)}.tag{padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.scroll{overflow:auto}
+canvas{width:100%;height:240px}small,.m{color:var(--mut)} .banner{padding:8px 12px;border-radius:8px;border:1px solid var(--warn);color:var(--warn);font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:800px){.two{grid-template-columns:1fr}}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);max-width:520px}
+label{display:block;margin:6px 0}input{width:100%;padding:5px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px}
+</style></head><body>
+<header><div><h1>StrategyLab <small>research only · live trading disabled</small></h1><small id="sub"></small></div>
+<div><button class="p" onclick="ctl('start')">Start Research</button> <button onclick="ctl('pause')">Pause</button> <button onclick="ctl('resume')">Resume</button> <button onclick="ctl('stop')">Stop</button> <button onclick="document.getElementById('dlg').showModal();loadSettings()">Settings</button></div></header>
+<main>
+<div id="banner" class="banner" style="display:none"></div>
+<div class="grid" id="tiles"></div>
+<div class="two">
+ <div class="card"><b>Current research</b><div id="cur" class="m" style="margin-top:6px"></div></div>
+ <div class="card"><b>AI providers &amp; resources</b><div id="ai" class="m" style="margin-top:6px"></div></div>
+</div>
+<div class="card scroll"><b>Strategy leaderboard</b> <small>(click a row for $300 simulation) · <label style="display:inline"><input type="checkbox" id="syn" style="width:auto" onchange="lb()"> show synthetic test data</label></small>
+<table id="lb"></table></div>
+<div class="card"><b>$300 capital simulation</b> <small id="capnote">select a strategy that reached the final stage</small><canvas id="cv" width="1100" height="240"></canvas><div id="capinfo" class="m"></div></div>
+<div class="two"><div class="card scroll"><b>Errors &amp; warnings</b><table id="ev"></table></div><div class="card scroll"><b>Datasets</b><table id="ds"></table></div></div>
+</main>
+<dialog id="dlg"><b>Research settings</b><div id="sf"></div><p><button class="p" onclick="saveSettings()">Save</button> <button onclick="dlg.close()">Close</button></p></dialog>
+<script>
+const $=id=>document.getElementById(id),f=(x,d=2)=>x==null?'–':(+x).toFixed(d),pc=x=>x==null?'–':(100*x).toFixed(1)+'%';
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+async function ctl(a){await j('/api/control',{method:'POST',body:JSON.stringify({action:a})});tick()}
+function tile(k,v,cls=''){return `<div class="card"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`}
+async function tick(){try{const s=await j('/api/status');$('sub').textContent='updated '+new Date().toLocaleTimeString();
+ const c=s.counts_real,run=s.control==='running'&&s.service_alive;
+ $('banner').style.display=(s.blocker||(!s.service_alive&&s.control==='running'))?'block':'none';$('banner').textContent=s.blocker?('Blocked: '+s.blocker+' — will retry automatically'):'Service not running — showing last-known progress. Press Start Research.';
+ $('tiles').innerHTML=tile('Engine',s.control.toUpperCase()+(s.service_alive?'':' (service offline)'),run?'ok':'warn')+tile('Research cycles (all)',s.cycles)+tile('Real-data experiments',c.experiments||0)
+ +tile('Rejected',c.REJECTED||0)+tile('Promising',c.PROMISING||0,'warn')+tile('Backtest-qualified',c.BACKTEST_QUALIFIED||0,(c.BACKTEST_QUALIFIED?'ok':''))
+ +tile('Best validated (test mean R)',s.best_validated?f(s.best_validated.test_mean_R,3)+' R':'none yet')+tile('Synthetic test cycles',(s.counts_synthetic.experiments||0));
+ const cj=s.current_job,nx=s.next_experiment,le=s.last_experiment;
+ $('cur').innerHTML=(cj?`Running: <b>${cj.symbol||''} ${cj.timeframe||''}</b> — ${cj.note||cj.kind}<br>`:'Idle<br>')+(nx?`Next: ${nx.spec.family} ${nx.symbol} ${nx.timeframe} <small>(${nx.note})</small><br>`:'')+(le?`Last: ${le.family||''} ${le.symbol} ${le.timeframe} → <b>${le.status||le.skipped}</b> ${(le.reasons||[]).join(', ')}`:'');
+ $('ai').innerHTML=`AI state: <b>${s.ai.state}</b> · budget ok: ${s.ai.budget_ok} · spent 24h $${f(s.ai.spent_24h)}<br>`+s.ai.providers.map(p=>`${p.name}: ${p.available?'<span class=ok>available</span>':'unavailable'}${p.cooldown_s?' (cooldown '+p.cooldown_s+'s)':''}`).join(' · ')+`<br>Dashboard RSS ${f(s.rss_mb,0)} MB · free RAM ${f(s.free_mem_mb,0)} MB`;
+ $('ev').innerHTML='<tr><th>time</th><th>src</th><th>message</th></tr>'+s.events.map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString()}</td><td class="${e.level=='error'?'bad':'warn'}">${e.source}</td><td style="white-space:normal">${e.message.slice(0,200)}</td></tr>`).join('');
+ $('ds').innerHTML='<tr><th>sym</th><th>tf</th><th>rows</th><th>gaps</th><th>funding</th><th>source</th></tr>'+s.datasets.map(d=>`<tr><td>${d.symbol}</td><td>${d.timeframe}</td><td>${d.rows}</td><td>${d.gaps}</td><td>${d.has_funding?'yes':'no'}</td><td>${d.synthetic?'<b class=warn>SYNTHETIC</b>':d.source}</td></tr>`).join('');
+}catch(e){$('sub').textContent='dashboard server unreachable'}}
+async function lb(){const r=await j('/api/leaderboard?synthetic='+($('syn').checked?1:0));
+ $('lb').innerHTML='<tr><th>Strategy</th><th>Inst</th><th>TF</th><th>Stage</th><th>Trades</th><th>Mean R</th><th>t</th><th>PF</th><th>Max DD (1% risk)</th><th>Status</th><th>P($1k/mo≤6mo)</th><th>P(ruin)</th><th>Why not</th></tr>'+
+ r.map(x=>`<tr class="c" onclick="cap('${x.id}','${x.symbol}','${x.timeframe}')"><td>${x.name} <small>${x.id}</small></td><td>${x.symbol}</td><td>${x.timeframe}</td><td>${x.stage}</td><td>${x.trades}</td><td>${f(x.mean_R,3)}</td><td>${f(x.t,1)}</td><td>${f(x.pf)}</td><td>${pc(x.max_dd)}</td><td><span class="tag ${x.status=='REJECTED'?'bad':x.status=='PROMISING'?'warn':'ok'}">${x.status}</span></td><td>${pc(x.p_target)}</td><td>${pc(x.p_ruin)}</td><td style="white-space:normal;max-width:260px">${x.reasons.join(', ')}</td></tr>`).join('')}
+async function cap(id,sy,tf){const r=await j(`/api/capital?sid=${id}&symbol=${sy}&tf=${tf}`);const c=r.capital_all;
+ if(!c){$('capinfo').textContent='No capital simulation for this strategy (rejected before the final stage). Reasons: '+((r.reasons||[]).join(', '));return}
+ $('capnote').textContent=`${id} ${sy} ${tf} · sizing fitted on train+val: risk ${pc(r.sizing.risk)}, ${r.sizing.lev}x, ${r.sizing.margin}`;
+ const b=c.equity_band,cv=$('cv'),x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);const n=b['50'].length,mx=Math.max(...b['95'],300)*1.1,W=cv.width-60,H=cv.height-30;
+ const X=i=>40+W*(i+1)/n,Y=v=>H-(v/mx)*(H-10)+5;const css=getComputedStyle(document.body);
+ const band=(lo,hi,a)=>{x.fillStyle=`rgba(37,87,214,${a})`;x.beginPath();b[lo].forEach((v,i)=>x[i?'lineTo':'moveTo'](X(i),Y(v)));for(let i=n-1;i>=0;i--)x.lineTo(X(i),Y(b[hi][i]));x.fill()};
+ band('5','95',.12);band('25','75',.25);x.strokeStyle='#2557d6';x.lineWidth=2;x.beginPath();b['50'].forEach((v,i)=>x[i?'lineTo':'moveTo'](X(i),Y(v)));x.stroke();
+ x.strokeStyle='#999';x.setLineDash([4,4]);x.beginPath();x.moveTo(40,Y(300));x.lineTo(cv.width,Y(300));x.stroke();x.setLineDash([]);x.fillStyle=css.color;x.font='11px sans-serif';x.fillText('$300 start',44,Y(300)-3);x.fillText('$'+Math.round(mx),2,12);b['50'].forEach((v,i)=>x.fillText('M'+(i+1),X(i)-8,H+18));
+ const P=(o)=>pc(o.p)+` [${pc(o.lo)}–${pc(o.hi)}]`;
+ $('capinfo').innerHTML=`Equity after withdrawals (shaded: 5–95% / 25–75%, line: median). Month-block bootstrap of realised trades — a statistical estimate, not a forecast.<br>
+ P(withdraw ≥$1k/mo): ${P(c.monthly_withdraw_any['1000'])} · ≥$2k: ${P(c.monthly_withdraw_any['2000'])} · ≥$3k: ${P(c.monthly_withdraw_any['3000'])} · sustained: ${P(c.sustained_withdraw_target)}<br>
+ P(equity≥$1k): ${P(c.reach_equity['1000'])} · $3k: ${P(c.reach_equity['3000'])} · $5k: ${P(c.reach_equity['5000'])} · $10k: ${P(c.reach_equity['10000'])}<br>
+ P(lose 25%): ${P(c.lose_25pct)} · 50%: ${P(c.lose_50pct)} · 75%: ${P(c.lose_75pct)} · whole account: ${P(c.ruin)} · any liquidation: ${P(c.any_liquidation)}<br>
+ Median monthly realised profit capacity (50% retained rule): $${f(c.median_monthly_capacity,0)} · median trades/month ${f(c.median_trades_per_month,1)}<br>
+ Multiple testing: t=${f(r.multiple_testing.t,2)}, adj. p=${(r.multiple_testing.adj_p).toExponential(2)} over ${r.multiple_testing.n_tested} strategies tested`}
+async function loadSettings(){const s=await j('/api/settings');$('sf').innerHTML=['start_equity','withdraw_target','retain_frac','max_ruin_prob','min_target_prob','ai_daily_budget_usd','ai_monthly_budget_usd','max_rss_mb','mc_paths'].map(k=>`<label>${k}<input id="s_${k}" value="${s[k]}"></label>`).join('')}
+async function saveSettings(){const o={};document.querySelectorAll('[id^=s_]').forEach(e=>o[e.id.slice(2)]=+e.value);await j('/api/settings',{method:'POST',body:JSON.stringify(o)});dlg.close()}
+tick();lb();setInterval(tick,3000);setInterval(lb,15000);
+</script></body></html>
