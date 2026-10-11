@@ -43,7 +43,7 @@ def spaced_count(idx: np.ndarray, gap: int) -> np.ndarray:
 
 
 def round_trip_cost(em):
-    return em.entry_cost() + 0.5 * em.exit_cost(stop=True) + 0.5 * em.exit_cost(stop=False)
+    return em.round_trip()
 
 
 def stage_a(F, spec, bounds, em, st, sig=None):
@@ -53,6 +53,10 @@ def stage_a(F, spec, bounds, em, st, sig=None):
     both = L & S
     sig_idx = np.flatnonzero((L | S) & ~both)
     sig_idx = sig_idx[(sig_idx >= lo) & (sig_idx < hi - 2)]
+    tradable = None
+    if em.min_lev_capable and len(sig_idx):       # high-leverage rule: signals whose stop cannot fit inside the 250x liquidation distance (or is cost-dominated) are not tradable
+        sf0 = spec["stop_atr"] * F.atr(spec.get("atr_n", 14))[sig_idx] / F.c[sig_idx]
+        okm = em.tradable_stop(sf0); tradable = round(float(okm.mean()), 3); sig_idx = sig_idx[okm]
     span_w = max((F.epoch_s[hi - 1] - F.epoch_s[lo]) / WEEK, 1e-6)
     upper = spaced_count(sig_idx, 2)
     hold_est = max(2, int(spec["max_hold"] / 3))
@@ -60,6 +64,7 @@ def stage_a(F, spec, bounds, em, st, sig=None):
     out = dict(signal_bars=int(len(sig_idx)), signal_bars_per_week=round(len(sig_idx) / span_w, 2),
                trades_week_upper=round(len(upper) / span_w, 3), trades_week_expected=round(len(expected) / span_w, 3),
                trades_month_expected=round(len(expected) / span_w * 52 / 12, 2), weeks=round(span_w, 1), hold_est_bars=hold_est)
+    if tradable is not None: out["tradable_signal_frac"] = tradable
     reasons = []
     # --- frequency: completed trades per week on average, and not hostage to one period
     if out["trades_week_upper"] < MIN_WEEKLY: reasons.append("insufficient_frequency")

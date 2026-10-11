@@ -61,7 +61,8 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
     imp_in = (em.half_spread + em.slippage) * em.cost_mult
     imp_tgt = em.half_spread * em.cost_mult
     imp_stop = (em.half_spread + em.stop_slippage) * em.cost_mult
-    fee = em.taker_fee * em.cost_mult
+    fee = em.taker_fee * em.cost_mult; mfee = em.maker_fee * em.cost_mult
+    hl = bool(em.min_lev_capable); lim_n = int(em.limit_bars); pen = em.fill_pen; lim_exits = bool(em.limit_exits)
     idx = np.flatnonzero((L | S))
     idx = idx[(idx >= lo) & (idx < hi - 2)]
     rows = []
@@ -73,13 +74,22 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
         a = atr[i]
         if not np.isfinite(a) or a <= 0: continue
         e = i + 1
-        entry = o[e] * (1 + d * imp_in)
+        if hl and not em.tradable_stop(stop_atr * a / c[i]): continue      # high-leverage rule: stop must fit inside the liquidation distance and be affordable
+        if lim_n:      # passive limit at the signal close; filled only when price trades through it within lim_n bars
+            lim = c[i]; e0 = None
+            for k in range(e, min(e + lim_n, hi - 1) + 1):
+                if (d > 0 and l[k] <= lim * (1 - pen)) or (d < 0 and h[k] >= lim * (1 + pen)): e0 = k; break
+            if e0 is None: continue
+            entry = min(o[e0], lim) if d > 0 else max(o[e0], lim); e = e0
+        else:
+            entry = o[e] * (1 + d * imp_in)
         sd = stop_atr * a
         stop = entry - d * sd
         stop_frac = sd / entry
         if stop_frac < 0.001: continue
         tgt = entry + d * rr * sd if rr > 0 else None
         last = min(i + maxh, hi - 1)
+        if e > last: continue
         mae = 0.0; exit_px = None; reason = 2; j_exit = last
         for j in range(e, last + 1):
             if d > 0:
@@ -87,24 +97,24 @@ def backtest(F, spec, L, S, em: ExchangeModel = DEFAULT, lo: int = 0, hi: int | 
                 elif l[j] <= stop: exit_px, reason = stop, 0
                 else:
                     mae = max(mae, (entry - l[j]) / entry)
-                    if tgt is not None and h[j] >= tgt: exit_px, reason = tgt, 1
+                    if tgt is not None and h[j] >= tgt * (1 + pen if lim_exits else 1) and not (lim_n and j == e): exit_px, reason = tgt, 1
             else:
                 if o[j] >= stop: exit_px, reason = o[j], 0
                 elif h[j] >= stop: exit_px, reason = stop, 0
                 else:
                     mae = max(mae, (h[j] - entry) / entry)
-                    if tgt is not None and l[j] <= tgt: exit_px, reason = tgt, 1
+                    if tgt is not None and l[j] <= tgt * (1 - pen if lim_exits else 1) and not (lim_n and j == e): exit_px, reason = tgt, 1
             if exit_px is not None: j_exit = j; break
         adv_exit = 0.0
         if exit_px is None:
             exit_px = c[last]; reason = 3 if last == hi - 1 and last < i + maxh else 2; j_exit = last
-        imp = imp_stop if reason == 0 else (imp_tgt if reason == 1 else (em.half_spread + em.slippage) * em.cost_mult)
+        imp = imp_stop if reason == 0 else (0.0 if reason == 1 and lim_exits else imp_tgt if reason == 1 else (em.half_spread + em.slippage) * em.cost_mult)
         fill = exit_px * (1 - d * imp)
         ret = d * (fill - entry) / entry
         if reason == 0: adv_exit = max(0.0, -ret)
         mae = max(mae, adv_exit)
         fund = d * (fc[j_exit] - fc[e])  # long pays positive funding
-        rows.append((ts[e], ts[j_exit], d, entry, ret, 2 * fee, fund, stop_frac, mae, adv_exit, reason, j_exit - e + 1, 1.0))
+        rows.append((ts[e], ts[j_exit], d, entry, ret, (mfee if lim_n else fee) + (mfee if (reason == 1 and lim_exits) else fee), fund, stop_frac, mae, adv_exit, reason, j_exit - e + 1, 1.0))
         free = j_exit  # next signal may be evaluated at close of the exit bar
     if not rows: return Trades()
     arr = np.array(rows, float)

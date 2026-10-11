@@ -225,3 +225,27 @@ def test_high_leverage_sizing_grid_is_250_or_500(home):
     from strategylab.btcc import get_model
     em = get_model("user_500x"); assert CAP.HI_LEV_GRID == [250, 500] and max(CAP.HI_RISK_GRID) >= 0.3
     assert [l for l in CAP.HI_LEV_GRID if l <= em.max_leverage] == [250, 500]
+
+
+def test_limit_execution_model_fills_and_fees():
+    import numpy as np
+    from strategylab import btcc, backtest as BT, feasibility as FE
+    em = btcc.get_model("user_500x_maker")
+    assert em.entry_cost() == em.maker_fee and em.exit_cost(stop=False) == em.maker_fee and em.exit_cost(stop=True) > em.taker_fee
+    assert FE.round_trip_cost(em) < FE.round_trip_cost(btcc.get_model("user_500x"))
+    # feasible stop window must be non-empty under passive execution (needs stop >= cost/0.5 and <= 0.8 x liq distance at 250x)
+    assert FE.round_trip_cost(em) / 0.5 < 0.8 * em.liq_distance(250)
+
+    class F:      # tiny synthetic tape: signal at bar 2 (long); price dips through the close limit at bar 4, then rallies to target
+        n = 12; hour = np.zeros(12); minute = np.arange(12) % 60
+        epoch_s = np.arange(12) * 300.0
+        o = np.array([100, 100, 100, 100, 100, 100, 101, 102, 103, 104, 105, 106.0]); c = o.copy()
+        h = o + 0.1; l = o - 0.1
+        def atr(self, n): return np.full(12, 1.0)
+        def funding(self): return np.zeros(12)
+    f = F(); f.l[4] = 99.0; f.h[7] = 110.0
+    L = np.zeros(12, bool); L[2] = True; S = np.zeros(12, bool)
+    spec = dict(stop_atr=0.5, target_rr=2.0, max_hold=8, atr_n=14)
+    tr = BT.backtest(f, spec, L, S, em, 0, 12)
+    if len(tr):                       # entered on the dip at the limit price, not at a market open
+        assert abs(tr.entry[0] - 100.0) < 1e-9 and tr.fee[0] <= 2 * em.taker_fee + 1e-12

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib, json, itertools
 import numpy as np
 
-EXIT_SPACE = {"stop_atr": [0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0], "target_rr": [0, 1.0, 1.5, 2.0, 3.0], "max_hold": [12, 24, 48, 96, 192, 288], "atr_n": [14]}   # wide stops/long holds: only way short timeframes can clear costs
+EXIT_SPACE = {"stop_atr": [0.3, 0.4, 0.5, 0.6, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0], "target_rr": [0, 1.0, 1.5, 2.0, 3.0], "max_hold": [12, 24, 48, 96, 192, 288], "atr_n": [14]}   # wide stops/long holds: only way short timeframes can clear costs
 SIDES = ["long", "short", "both"]
 
 

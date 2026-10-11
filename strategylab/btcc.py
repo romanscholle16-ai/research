@@ -28,15 +28,32 @@ class ExchangeModel:
     cost_mult: float = 1.0          # for cost-sensitivity analysis
     high_leverage: bool = False     # user-directed mode: strategies must be sizeable at min_lev_capable..max_leverage (250x/500x) with liquidation modelled
     min_lev_capable: int = 0
+    limit_bars: int = 0             # >0: entries are passive limit orders at the signal-bar close, live for this many bars (maker fee, no spread/slippage; fills only if price trades through)
+    limit_exits: bool = False       # targets are resting limit orders (maker fee; fill only if price trades through); stops/time exits stay taker
+    fill_pen: float = 0.00005       # price must trade this fraction THROUGH a limit before it counts as filled (queue-position haircut)
 
     def minq(self, symbol):
         return (self.min_qty or {"BTCUSDT": 0.001, "ETHUSDT": 0.01}).get(symbol, 0.01)
 
-    def entry_cost(self):   # fraction of notional, market-in
+    def entry_cost(self):   # fraction of notional
+        if self.limit_bars: return self.maker_fee * self.cost_mult
         return (self.taker_fee + self.half_spread + self.slippage) * self.cost_mult
 
     def exit_cost(self, stop=False):
+        if not stop and self.limit_exits: return self.maker_fee * self.cost_mult
         return (self.taker_fee + self.half_spread + (self.stop_slippage if stop else self.slippage)) * self.cost_mult
+
+    def round_trip(self):
+        return self.entry_cost() + 0.5 * self.exit_cost(stop=True) + 0.5 * self.exit_cost(stop=False)
+
+    def tradable_stop(self, sfrac, max_cost_R=0.4):
+        """High-leverage execution rule (known at signal time): the stop must sit inside the liquidation distance at min_lev_capable and
+        the round trip must cost <= max_cost_R of the 1R risk, otherwise the trade is skipped. No-op for normal presets."""
+        import numpy as np
+        sfrac = np.asarray(sfrac, float)
+        if not self.min_lev_capable: return np.ones(sfrac.shape, bool)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return (sfrac <= 0.8 * self.liq_distance(self.min_lev_capable)) & (self.round_trip() / sfrac <= max_cost_R)
 
     def liq_distance(self, leverage):
         """Adverse fractional move from entry that triggers liquidation (isolated margin, no extra margin added)."""
@@ -67,6 +84,9 @@ PRESETS = {
     "user_500x": ExchangeModel(name="BTCC 250-500x (user-asserted, unverified; conservative fees)", max_leverage=500, maint_margin_rate=0.001, liq_fee=0.001, high_leverage=True, min_lev_capable=250),
     "user_500x_listed": ExchangeModel(name="BTCC 250-500x (user-asserted; listed VIP0 taker 0.048%, tighter slippage)", taker_fee=0.00048, maker_fee=0.0003, half_spread=0.00005,
                                       slippage=0.0001, stop_slippage=0.0003, max_leverage=500, maint_margin_rate=0.001, liq_fee=0.001, high_leverage=True, min_lev_capable=250),
+    # Passive-execution variant: limit entries/targets (maker fee, fill only when price trades through), taker stops. Fees: VIP0 maker 0.03% (conservative end of the conflicting 0.02-0.03%), taker 0.06%.
+    "user_500x_maker": ExchangeModel(name="BTCC 250-500x (user-asserted; limit entries/targets, taker stops)", taker_fee=0.0006, maker_fee=0.0003, max_leverage=500, maint_margin_rate=0.001,
+                                     liq_fee=0.001, high_leverage=True, min_lev_capable=250, limit_bars=3, limit_exits=True),
 }
 
 
