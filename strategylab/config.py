@@ -36,7 +36,7 @@ class Settings:
     max_lose50_prob: float = 0.35
     multiple_testing_alpha: float = 0.05
     # resources
-    max_rss_mb: int = 6000
+    max_rss_mb: int = 2800
     n_workers: int = 1                  # parallel worker processes (worker 0 = primary: planning/portfolio/sync; others run experiments+rechecks)
     job_timeout_s: int = 600
     watchdog_stall_s: int = 900
