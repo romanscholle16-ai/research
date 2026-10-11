@@ -107,3 +107,13 @@ def test_audit_runs_and_flags_legacy_survivors(home):
     o = audit.run_audit(db, st, write_legacy=False, synthetic=1)
     assert o["distinctness"]["distinct_hypotheses"] >= 1 and "early_filter" in o and o["early_filter"]["rows_that_ran_backtest_after_failing_eligibility"] == 0
     assert "Research efficiency report" in audit.render_markdown(o) and db.q("SELECT COUNT(*) n FROM reports")[0]["n"] == 1
+
+
+def test_cells_without_gross_edge_are_suppressed(home):
+    st, db, store = setup(home); import json as _j
+    for i in range(450):
+        db.x("INSERT INTO experiments(strategy_id,stage,symbol,timeframe,started,finished,status,metrics_json,synthetic) VALUES('x','screen','BTCUSDT','1h',0,0,'fail',?,0)",
+             (_j.dumps(dict(mean_R=-0.2, gross_mean_R=-0.05, avg_stop=0.02, avg_cost=0.003)),))
+    from strategylab.director import Director
+    D_ = Director(db, st, store, None)
+    assert ("BTCUSDT", "1h") in D_.dead_cells()

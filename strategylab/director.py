@@ -26,8 +26,22 @@ class Director:
         self._atoms = {}; self._stops = {}
 
     # ------------------------------------------------------------------ evidence
+    def dead_cells(self):
+        """Self-heal: (symbol, tf) cells whose recent screens show no gross edge are dropped from exploitation/exploration (re-probed ~hourly with fresh data)."""
+        now = time.time(); c = self.db.get("dead_cells") or {}
+        if now - c.get("ts", 0) < 1200: return {tuple(k.split("|")) for k in c.get("cells", [])}
+        dead = []
+        for sy in self.st.symbols:
+            for tf in self.st.timeframes:
+                ms = [json.loads(r["metrics_json"]) for r in self.db.q("SELECT metrics_json FROM experiments WHERE stage='screen' AND synthetic=0 AND symbol=? AND timeframe=? ORDER BY id DESC LIMIT 600", (sy, tf))]
+                ms = [m for m in ms if m.get("gross_mean_R") is not None and m.get("avg_stop")]
+                if len(ms) >= 400 and sum(m["mean_R"] > 0.05 for m in ms) / len(ms) < 0.01 and sum(m["gross_mean_R"] > 0 for m in ms) / len(ms) < 0.10:
+                    dead.append(f"{sy}|{tf}")
+        if set(dead) != set(c.get("cells", [])): self.db.log("info", "director", f"self-heal: cells with no gross edge suppressed: {dead or 'none'}")
+        self.db.set("dead_cells", dict(ts=now, cells=dead)); return {tuple(k.split("|")) for k in dead}
+
     def arms(self):
-        cells = self.store.available(); out = {}
+        dead = self.dead_cells(); cells = [c for c in self.store.available() if c not in dead] or self.store.available(); out = {}
         reg = {(r["family"], r["symbol"], r["timeframe"]): r for r in self.db.q(
             """SELECT family, symbol, timeframe, COUNT(*) n, SUM(best_stage>=1) screened, SUM(best_stage>=3) vpass, SUM(n_variants) variants
                FROM hyp_registry GROUP BY 1,2,3""")}
