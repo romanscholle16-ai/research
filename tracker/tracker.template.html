@@ -1,0 +1,151 @@
+<title>Strategy Mission Tracker</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one status strip, then mission gates vs. evidence, then candidates and failure mix. Mono for every measured value. */
+:root{--bg:#f3f5f6;--panel:#ffffff;--fg:#17212b;--mut:#5d6b78;--line:#dbe1e6;--acc:#0b7a75;--acc-soft:#d9efed;--ok:#1a7f4b;--warn:#a86400;--bad:#b3321f;--bad-soft:#f6e0db;--warn-soft:#f6ead2;--ok-soft:#dcefe3;
+--sans:"Public Sans",system-ui,"Segoe UI",sans-serif;--mono:"JetBrains Mono",ui-monospace,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f161c;--panel:#17212a;--fg:#e6edf2;--mut:#93a3b1;--line:#27343f;--acc:#4cc2ba;--acc-soft:#17383a;--ok:#5ccb8d;--warn:#e3a73f;--bad:#f08a78;--bad-soft:#3b2420;--warn-soft:#38301a;--ok-soft:#1b3326;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f161c;--panel:#17212a;--fg:#e6edf2;--mut:#93a3b1;--line:#27343f;--acc:#4cc2ba;--acc-soft:#17383a;--ok:#5ccb8d;--warn:#e3a73f;--bad:#f08a78;--bad-soft:#3b2420;--warn-soft:#38301a;--ok-soft:#1b3326;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans);padding-inline:16px;padding-block:20px}
+.wrap{max-width:1100px;margin:0 auto;display:grid;gap:16px}
+h1{font-size:1.5rem;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);margin:0 0 10px;font-weight:600}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.top{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+.sub{color:var(--mut);margin:4px 0 0;max-width:62ch}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:99px;font-weight:600;font-size:.85rem;border:1px solid var(--line);background:var(--panel)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mut)}
+.live .dot{background:var(--ok)} .down .dot{background:var(--bad)} .stale .dot{background:var(--warn)}
+.banner{padding:10px 14px;border-radius:8px;background:var(--warn-soft);color:var(--fg);border:1px solid var(--warn)}
+.banner[hidden]{display:none}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.strip>div{background:var(--panel);padding:12px 14px}
+.k{color:var(--mut);font-size:.75rem}.v{font-family:var(--mono);font-size:1.45rem;font-weight:600;font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+@media(max-width:820px){.two{grid-template-columns:1fr}}
+.gate{display:grid;grid-template-columns:22px 1fr auto;gap:10px;padding:9px 0;border-top:1px solid var(--line);align-items:start}
+.gate:first-of-type{border-top:0}
+.ic{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:.7rem;font-weight:700}
+.ic.no{background:var(--bad-soft);color:var(--bad)} .ic.part{background:var(--warn-soft);color:var(--warn)} .ic.yes{background:var(--ok-soft);color:var(--ok)}
+.gate small{color:var(--mut);display:block}
+.tag{font-family:var(--mono);font-size:.78rem;padding:2px 8px;border-radius:6px;background:var(--bg);white-space:nowrap}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.85rem}
+th,td{text-align:left;padding:7px 10px;border-top:1px solid var(--line);white-space:nowrap}
+th{color:var(--mut);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;border-top:0}
+td.n{text-align:right}
+.bar{display:grid;grid-template-columns:minmax(120px,190px) 1fr 56px;gap:10px;align-items:center;padding:4px 0;font-size:.84rem}
+.bar i{display:block;height:8px;border-radius:4px;background:var(--acc);min-width:2px}
+.bar span:first-child{overflow-wrap:anywhere}
+svg text{fill:var(--mut);font-family:var(--mono);font-size:11px}
+.foot{color:var(--mut);font-size:.8rem}
+.tg{background:none;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:.8rem}
+.tg:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Strategy Mission Tracker</h1>
+      <p class="sub">$300 start, 6 months, at least one trade a week, $1,000+ a month withdrawn with half of each profitable month kept. Research only, live trading disabled.</p>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span id="pill" class="pill"><span class="dot"></span><span id="pilltxt">–</span></span>
+      <button class="tg" id="theme" type="button">Theme</button>
+    </div>
+  </div>
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="strip" id="strip"></div>
+
+  <div class="two">
+    <div class="panel"><h2>Mission gates</h2><div id="gates"></div></div>
+    <div class="panel"><h2>Experiments completed over time</h2><div id="chart"></div><p class="foot" id="chartnote"></p></div>
+  </div>
+
+  <div class="panel"><h2>Closest candidates, ranked by chance of $1,000 a month within 6 months</h2>
+    <div class="scroll"><table id="cands"></table></div>
+    <p class="foot">Chance values come from resampling past monthly trade results, so they are estimates, not forecasts. Every candidate here already failed at least one gate.</p></div>
+
+  <div class="two">
+    <div class="panel"><h2>Why strategies are rejected</h2><div id="reasons"></div></div>
+    <div class="panel"><h2>What blocks the promising ones</h2><div id="blockers"></div></div>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+/*DATA*/
+const S = window.__STATUS__;
+const $ = id => document.getElementById(id);
+const fmt = n => Number(n).toLocaleString('en-US');
+const pct = x => (x*100).toFixed(x<0.1?1:0)+'%';
+const age = s => s<90? Math.round(s)+' s' : s<5400? Math.round(s/60)+' min' : s<172800? (s/3600).toFixed(1)+' h' : Math.round(s/86400)+' d';
+
+const snapAge = Date.now()/1000 - S.generated;
+const svcAge = S.service_age_s == null ? null : S.service_age_s + snapAge;
+let state = 'live', label = 'Researching';
+if (S.control !== 'running') { state='stale'; label = S.control==='paused'?'Paused':'Stopped'; }
+else if (svcAge == null || svcAge - snapAge > 60) { state='down'; label='Service not responding'; }
+$('pill').className = 'pill '+state; $('pilltxt').textContent = label+' at snapshot';
+if (snapAge > 1800 || state==='down') {
+  const b=$('banner'); b.hidden=false;
+  b.textContent = state==='down'
+    ? 'At the time of this snapshot the research service had stopped sending heartbeats. It restarts automatically from its saved state when the computer or container is running again.'
+    : 'This snapshot is '+age(snapAge)+' old. Progress since then is not shown. The research service keeps its own records and continues independently of this page.';
+}
+
+$('strip').innerHTML = [
+  ['Experiments run', fmt(S.experiments)],
+  ['Research cycles', fmt(S.cycles)],
+  ['Promising', fmt(S.counts.PROMISING||0)],
+  ['Rejected', fmt(S.counts.REJECTED||0)],
+  ['Backtest qualified', fmt(S.qualified)],
+  ['Worker restarts, 24 h', fmt(S.restarts_24h)]
+].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+const best = S.candidates[0];
+const gate = (st,title,note,val)=>`<div class="gate"><span class="ic ${st}">${st==='yes'?'✓':st==='part'?'~':'×'}</span><div>${title}<small>${note}</small></div><span class="tag">${val}</span></div>`;
+$('gates').innerHTML = [
+  gate(S.qualified>0?'yes':'no','At least one strategy qualifies on every gate','No strategy or portfolio is backtest qualified yet.', fmt(S.qualified)+' found'),
+  gate(best&&best.p1k>=0.5?'yes':'no','Reaches $1,000 a month within 6 months','Required: at least a 50% chance. Best candidate so far:', best?pct(best.p1k):'–'),
+  gate(best&&best.weekly>=0.95?'yes':'no','A completed trade in at least 95% of weeks','Best-ranked candidate, locked test period:', best?pct(best.weekly):'–'),
+  gate(best&&best.adj_p<=0.05?'yes':'no','Survives correction for the number of strategies tried','Adjusted p-value must be 0.05 or lower:', best?best.adj_p.toFixed(3):'–'),
+  gate(best&&best.ruin<=0.05?'yes':'part','Account ruin chance of 5% or less','Met by the best candidate, but only by trading too rarely to reach the target:', best?pct(best.ruin):'–'),
+  gate('no','Forward paper trading on new data','Not started. Only possible after a candidate qualifies on history.','0 candidates')
+].join('');
+
+(function chart(){
+  const d=S.series; const el=$('chart');
+  if(d.length<2){ el.innerHTML='<p class="foot">Not enough history in this snapshot to draw a trend yet.</p>'; $('chartnote').textContent=fmt(S.experiments)+' experiments in total.'; return; }
+  const W=520,H=190,L=44,R=12,T=10,B=26, x0=d[0][0], x1=d[d.length-1][0], ymax=Math.max(...d.map(p=>p[1]));
+  const X=t=>L+(W-L-R)*(t-x0)/Math.max(x1-x0,1), Y=v=>T+(H-T-B)*(1-v/ymax);
+  const pts=d.map(p=>X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ');
+  const area=`${X(x0)},${Y(0)} ${pts} ${X(x1)},${Y(0)}`;
+  const last=d[d.length-1];
+  let grid=''; for(let i=0;i<=3;i++){const v=ymax*i/3; grid+=`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${fmt(Math.round(v))}</text>`;}
+  const d0=new Date(x0*1000), d1=new Date(x1*1000);
+  const f=t=>t.toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Cumulative experiments over time">${grid}
+   <polygon points="${area}" fill="var(--acc)" opacity=".14"/><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2"/>
+   <circle cx="${X(last[0])}" cy="${Y(last[1])}" r="4" fill="var(--acc)"/>
+   <text x="${L}" y="${H-6}">${f(d0)}</text><text x="${W-R}" y="${H-6}" text-anchor="end">${f(d1)}</text></svg>`;
+  $('chartnote').textContent='30-minute buckets, real-data experiments only (synthetic test runs excluded).';
+})();
+
+$('cands').innerHTML = '<tr><th>Strategy</th><th>Market</th><th>Status</th><th class="n">Test trades</th><th class="n">Test mean R</th><th class="n">Weeks traded</th><th class="n">$1k/mo</th><th class="n">Ruin</th><th class="n">Adj. p</th><th>Blocked by</th></tr>' +
+  S.candidates.map(c=>`<tr><td class="mono">${c.family}<br><span style="color:var(--mut)">${c.id}</span></td><td>${c.inst.replace('USDT','')} ${c.tf}</td><td>${c.status.toLowerCase()}</td>
+  <td class="n mono">${c.test_n}</td><td class="n mono">${c.test_R.toFixed(2)}</td><td class="n mono">${pct(c.weekly)}</td><td class="n mono">${pct(c.p1k)}</td><td class="n mono">${pct(c.ruin)}</td><td class="n mono">${c.adj_p.toFixed(3)}</td>
+  <td style="white-space:normal;min-width:200px">${c.why.map(w=>w.replaceAll('_',' ')).join(', ')}</td></tr>`).join('');
+
+const bars=(arr,el)=>{const m=Math.max(...arr.map(a=>a[1]),1); $(el).innerHTML=arr.map(([k,v])=>`<div class="bar"><span>${k.replaceAll('_',' ')}</span><i style="width:${(100*v/m).toFixed(1)}%"></i><span class="mono" style="text-align:right">${fmt(v)}</span></div>`).join('');};
+bars(S.reasons,'reasons'); bars(S.blockers,'blockers');
+
+const when=new Date(S.generated*1000).toLocaleString('en-US',{dateStyle:'medium',timeStyle:'short'});
+const ds=S.data[0]; const span=ds?`${new Date(ds.start_ts*1000).getUTCFullYear()}–${new Date(ds.end_ts*1000).getUTCFullYear()}`:'';
+$('foot').textContent=`Snapshot taken ${when}, ${age(snapAge)} before you opened it. Data: BTCUSDT and ETHUSDT, ${span}, Binance USD-M history used as a stand-in for BTCC. BTCC fees and margin rules are unverified assumptions. AI state: ${S.ai_state.replaceAll('_',' ')}. Errors in the last hour: ${S.errors_1h}.`;
+
+const themeBtn=$('theme'); themeBtn.onclick=()=>{const r=document.documentElement; const cur=r.dataset.theme|| (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'); r.dataset.theme=cur==='dark'?'light':'dark';};
+</script>
