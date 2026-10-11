@@ -45,6 +45,8 @@ CREATE INDEX IF NOT EXISTS ix_hyp_group ON hyp_registry(group_key);
 CREATE TABLE IF NOT EXISTS precheck_rejections(id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reason TEXT, hkey TEXT);
 CREATE TABLE IF NOT EXISTS director_batches(id INTEGER PRIMARY KEY, ts REAL, mode TEXT, n INTEGER, composition_json TEXT, reason TEXT);
 CREATE TABLE IF NOT EXISTS research_metrics(id INTEGER PRIMARY KEY, ts REAL, body TEXT);
+CREATE TABLE IF NOT EXISTS refine_runs(
+  id INTEGER PRIMARY KEY, ts REAL, seed TEXT, symbol TEXT, timeframe TEXT, autopsy_json TEXT, lineage_json TEXT, final_json TEXT);
 CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, body TEXT);
 CREATE TABLE IF NOT EXISTS lessons(
   id INTEGER PRIMARY KEY, ts REAL, family TEXT, symbol TEXT, timeframe TEXT, reasons TEXT, strategy_id TEXT);

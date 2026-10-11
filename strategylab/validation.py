@@ -112,6 +112,16 @@ def placebo_test(F, spec, em, lo, hi, rng, n=100):
     return dict(p=float(p), actual=a, placebo_mean=float(np.mean(vals)), n=len(vals))
 
 
+def down_regime_check(F, wf, lo, hi, max_mkt_ret=0.05, min_trades=20):
+    """Folds in which buy-and-hold did NOT rise (> +5%): the strategy's mean R there must be positive, otherwise its 'edge' is just long exposure
+    to a bull market (the train/validation years were bull markets; the locked-test years were not)."""
+    k = wf["k"]; edges = np.linspace(lo, hi, k + 1).astype(int); tot = 0; acc = 0.0; used = 0
+    for (n, r), a, b in zip(wf["folds"], edges[:-1], edges[1:]):
+        mkt = F.c[min(b, F.n) - 1] / F.c[a] - 1
+        if mkt <= max_mkt_ret and n > 0: tot += n; acc += n * r; used += 1
+    return dict(checked=bool(tot >= min_trades), folds=used, n=int(tot), mean_R=float(acc / tot) if tot else 0.0)
+
+
 def validate(F, spec, bounds, em, st, tr_train, rng):
     out = {}; reasons = []
     vlo, vhi = bounds["val"]; tlo, _ = bounds["train"]
@@ -121,6 +131,8 @@ def validate(F, spec, bounds, em, st, tr_train, rng):
     if reasons: return out, reasons, trv
     wf = folds_consistency(F, spec, em, tlo, vhi); out["folds"] = wf
     if wf["positive"] < math.ceil(wf["k"] * 2 / 3): reasons.append("regime_dependent_or_unstable")
+    dr = down_regime_check(F, wf, tlo, vhi); out["down_regimes"] = dr                 # beta-neutrality: must also earn in flat/falling markets (stricter than before)
+    if dr["checked"] and dr["mean_R"] <= 0: reasons.append("fails_down_regimes")
     wo = walk_forward_opt(F, spec, em, tlo, vhi, rng=rng); out["wfo"] = wo
     if wo["n"] < 30 or wo["mean_R"] <= 0: reasons.append("fails_walk_forward")
     sens = sensitivity(F, spec, em, tlo, vhi, rng); out["sensitivity"] = sens

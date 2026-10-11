@@ -177,3 +177,34 @@ def test_feature_memo_is_bounded():
     for k in range(Features.MEMO_MAX * 3): F._memo(("k", k), lambda: _np.zeros(n))
     assert len(F._c) <= Features.MEMO_MAX
     assert F.atr(14).shape == (n,)
+
+
+def test_refinery_ratchet_and_dev_only(home, monkeypatch):
+    from strategylab import refine as RF, validation as VV
+    st, db, store = setup(home)
+    from strategylab.btcc import get_model; EM = get_model('conservative')
+    it = store.get("BTCUSDT", "1h"); hi_allowed = it["bounds"]["val"][1]; seen = []
+    real = VV.run
+    monkeypatch.setattr(RF.V, "run", lambda F, spec, em, lo, hi, cache=None: (seen.append(hi), real(F, spec, em, lo, hi, cache))[1])
+    spec = tspec()
+    a = RF.autopsy(it["F"], spec, EM, hi_allowed)
+    assert len(a["window_R"]) == RF.K_WIN and a["verdict"] in ("broad", "concentrated", "fragile")
+    best, ev, lin = RF.refine_seed(db, st, store, EM, spec, "BTCUSDT", "1h", rounds=2, budget_s=30)
+    assert max(seen) <= hi_allowed                                   # the locked test range is never touched
+    # ratchet logic
+    par = dict(propose=0.05, confirm=0.05, all=0.05, pos_odd=.75, pos_even=.75, pos_all=.75, trades=100)
+    assert RF.accept(par, dict(par, propose=0.08, confirm=0.05))
+    assert not RF.accept(par, dict(par, propose=0.20, confirm=0.00))   # improves only where it looked
+    assert not RF.accept(par, dict(par, propose=0.08, pos_all=.5))     # loses consistency
+    n = RF.run_batch(db, st, store, EM, max_seeds=2, budget_s=20); assert "queued" in n
+
+
+def test_down_regime_gate_rejects_bull_only_edge():
+    import numpy as _np
+    from strategylab.validation import down_regime_check
+    class FF: pass
+    f = FF(); n = 600; f.n = n
+    f.c = _np.r_[_np.linspace(100, 160, 300), _np.linspace(160, 120, 300)]          # first half bull, second half bear
+    wf = dict(k=2, folds=[(60, 0.2), (60, -0.15)])                                   # strategy earns only in the bull half
+    dr = down_regime_check(f, wf, 0, n); assert dr["checked"] and dr["mean_R"] < 0
+    wf2 = dict(k=2, folds=[(60, 0.2), (60, 0.10)]); assert down_regime_check(f, wf2, 0, n)["mean_R"] > 0

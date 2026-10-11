@@ -70,6 +70,8 @@ def main():
         if resources.free_mem_mb() < 800:
             db.set("blocker", "low_system_memory"); time.sleep(10); continue
         try:
+            if primary and time.time() - (db.get("refine_last") or 0) > 1200 and not db.q("SELECT 1 FROM jobs WHERE kind='refine' AND status IN ('queued','running')"):
+                db.enqueue("refine", {}, priority=2)
             nw = max(1, int(Settings.load().n_workers))
             qd = db.q("SELECT SUM(kind='experiment' AND status='queued') e, SUM(kind='plan') p FROM jobs WHERE status IN ('queued','running') AND kind IN ('experiment','plan')")[0]
             if (qd["e"] or 0) < 30 * nw and (qd["p"] or 0) < nw: db.enqueue("plan", {"n": 24}, priority=1)   # keep every worker fed; planning runs on any worker
@@ -96,6 +98,10 @@ def main():
                     db.set("blocker", None)
                     if not plans:
                         time.sleep(1)
+                elif job["kind"] == "refine":
+                    from . import refine as RF
+                    res = RF.run_batch(db, st, store, em, max_seeds=6, budget_s=240); db.finish_job(job["id"], res)
+                    db.log("info", "refine", f"refinery pass: {res}")
                 elif job["kind"] == "data_sync":
                     n = sum(D.sync_daily(sym, st.research_end) for sym in st.symbols); db.set("data_sync_ts", time.time())
                     store.c.clear()           # reload frames so forward bars become visible
