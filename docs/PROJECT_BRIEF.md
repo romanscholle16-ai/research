@@ -61,3 +61,14 @@ Verified at the start of phase 2 against the live database: 9,817 strategies / 1
 - **F. Persistence:** progress watchdog (queued work but no job completed for 15 min => restart worker; a heartbeat alone is not progress); incremental parse cache so a daily data sync does not re-parse all history; Windows Task Scheduler logon + 10-minute watchdog entries (`scripts/install_autostart.bat`, **untested on Windows**); dashboard shows seconds since the last completed experiment.
 
 **Still open:** real BTCC margin/liquidation tiers; a real Claude hypothesis run; a long soak test on Windows; replacing Sidak with FDR/deflated-Sharpe; portfolio construction from genuinely new edges.
+
+### Null-calibration results (real bars block-resampled, 24-bar blocks, 1,200 experiments each, 1h+4h, full pipeline)
+| Null | PROMISING | reached final stage | BACKTEST_QUALIFIED |
+|---|---|---|---|
+| drift removed, seed 0 (pre robustness gates) | 10 (0.83%) | 39 | 0 |
+| drift removed, seed 1 (current gates) | 23 (1.92%) | 66 | 0 |
+| drift kept, seed 0 (pre robustness gates) | 58 (4.83%) | 105 | 0 |
+| drift kept, seed 1 (current gates) | 45 (3.75%) | 98 | 0 |
+Reading: with no skill available the PROMISING label still fires on roughly 1-5% of strategies (concentrated in smc_bos_pullback, vol_squeeze_breakout, taker_flow), while BACKTEST_QUALIFIED never fired in 4,800 null experiments.
+On real data about 9% of strategies are PROMISING, so a PROMISING label is weak evidence and families that also fire on nulls deserve extra suspicion. The robustness gates did not lower the null rate much, so the gates are not what separates noise from signal: multiple-testing and the weekly/target gates are.
+Forward path verified on real data: 8 top PROMISING strategies evaluated on 1.26 weeks of post-cutoff bars -> all `insufficient_data` (needs >= 8 weeks and >= 10 trades), as designed.
