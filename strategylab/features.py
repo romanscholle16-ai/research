@@ -18,7 +18,7 @@ class Features:
         self.minute = df.index.minute.to_numpy()
         self.dow = df.index.dayofweek.to_numpy()
 
-    MEMO_MAX = 90          # bound per-market feature cache (each entry is a full-length float array): keeps a worker's RSS from ballooning across many specs
+    MEMO_MAX = 260         # bound per-market feature cache (each entry is a full-length float array): keeps a worker's RSS from ballooning across many specs
 
     def _memo(self, key, fn):
         if key not in self._c:

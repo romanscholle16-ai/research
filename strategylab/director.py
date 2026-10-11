@@ -116,7 +116,7 @@ class Director:
         k = (sy, tf)
         if k not in self._atoms:
             it = self.store.get(sy, tf); lo, hi = it["bounds"]["train"]
-            self._atoms[k] = G.atom_screen(it["F"], lo, hi)
+            self._atoms[k] = G.atom_screen(it["F"], lo, hi); it["F"]._c.clear()      # the screen touches hundreds of one-off arrays: release them
         t = self._atoms[k]; return {n: (max(v, 0) if side == "long" else max(-v, 0)) for n, v in t.items()}
 
     def _exits(self, rng, sy, tf):
