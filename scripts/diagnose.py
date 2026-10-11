@@ -39,6 +39,17 @@ if T:
     best_r = np.median(a[:, 1]); tpm = np.median(a[:, 3])
     out.append(f"- arithmetic: at {tpm:.1f} trades/month and {best_r:.3f} R/trade, risking 5% per trade yields ≈ {tpm*best_r*5:.1f}% per month; the target needs ≈ 61% per month.")
 
+# positioning-data rules vs the rest (aggregate diagnostic only; never used for selection)
+P = ("oichg", "lstop", "lsacct", "tkls"); pos, oth = [], []
+for r in d.q("SELECT s.spec_json sj, e.metrics_json m FROM experiments e JOIN strategies s ON s.id=e.strategy_id WHERE e.stage='final' AND e.synthetic=0 AND e.timeframe!='4h' AND e.finished>?", (cut,)):
+    try:
+        sp = json.loads(r["sj"]); t = (json.loads(r["m"]).get("test") or {})
+        if not t.get("n"): continue
+        isp = sp["family"] == "gp_rule" and any(a[0].startswith(P) for a in sp["params"]["rule"])
+        (pos if isp else oth).append(t["mean_R"])
+    except Exception: continue
+if pos:
+    out.append(f"\n### Positioning-data rules (open interest / long-short ratios) vs everything else, locked-test mean R/trade\n- positioning rules: n={len(pos)}, median {np.median(pos):.3f}, share>0 {np.mean(np.array(pos)>0):.0%}; other: n={len(oth)}, median {np.median(oth):.3f}, share>0 {np.mean(np.array(oth)>0):.0%}\n- reading: higher dev/validation pass rates for positioning rules did NOT carry to the locked test (edge ~0, |t|<2) -- the positioning history only starts in 2021 and its relationships are regime-specific.")
 out.append("""
 ## 4. Root causes (ranked)
 1. **No gross edge on short timeframes.** Median gross R/trade on 5m/15m is negative; the entry ideas (price/volume/flow/funding rules from public data) are not predictive at that horizon, and round-trip cost (0.10–0.16 R per trade) makes it worse. Searching more of the same on 5m is wasted compute — the director now suppresses cells whose recent screens show no gross edge.

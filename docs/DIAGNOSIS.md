@@ -1,21 +1,21 @@
-# Diagnosis — why strategies are rejected (generated 2026-10-11 12:10 UTC, last 4 days)
+# Diagnosis — why strategies are rejected (generated 2026-10-11 13:18 UTC, last 2 days)
 
 ## 1. Funnel (non-4h, real data)
 
 | stage | pass | fail |
 |---|---|---|
-| eligibility | 9848 | 32810 |
-| screen | 1103 | 14559 |
-| validate | 543 | 558 |
-| final | 0 | 543 |
+| eligibility | 16589 | 50560 |
+| screen | 1843 | 20560 |
+| validate | 991 | 850 |
+| final | 0 | 986 |
 
-**eligibility failures:** near_duplicate_failed_hypothesis 11899, cost_infeasible 10854, infeasible_for_target 5651, insufficient_frequency 4599, frequency_single_period 764, exit_variant_limit 601, noise_neighbourhood 63
+**eligibility failures:** infeasible_for_target 14977, near_duplicate_failed_hypothesis 12019, cost_infeasible 10909, insufficient_frequency 10906, frequency_single_period 2568, exit_variant_limit 2359, noise_neighbourhood 145
 
-**screen failures:** no_edge 11380, statistically_insignificant 1715, cost_dominated 1006, poor_risk_reward 970, too_few_trades 458
+**screen failures:** no_edge 15506, statistically_insignificant 3052, cost_dominated 1544, poor_risk_reward 1386, too_few_trades 458
 
-**validate failures:** fails_out_of_sample 524, fails_walk_forward 21, unstable_parameters_overfit 16, regime_dependent_or_unstable 3
+**validate failures:** fails_out_of_sample 780, fails_walk_forward 36, unstable_parameters_overfit 25, regime_dependent_or_unstable 15, no_alpha_vs_random_entries 1, cost_sensitive 1
 
-**final failures:** cannot_reach_target_test 543, cannot_reach_target_all 543, fails_multiple_testing 543, excess_drawdown_test 376, inadequate_trade_frequency 333, depends_on_few_trades 268, fails_locked_test 259
+**final failures:** cannot_reach_target_test 986, cannot_reach_target_all 986, fails_multiple_testing 986, inadequate_trade_frequency 733, depends_on_few_trades 596, excess_drawdown_test 509, fails_locked_test 461
 
 ## 2. Gross edge vs cost per timeframe (screen stage, train data)
 
@@ -27,8 +27,12 @@
 
 ## 3. Candidates that reach the locked-test stage (non-4h)
 
-- 543 candidates; median locked-test mean R/trade **0.006**, positive in 52%, t>2 in 0.0%; median trades/month 7.3
-- arithmetic: at 7.3 trades/month and 0.006 R/trade, risking 5% per trade yields ≈ 0.2% per month; the target needs ≈ 61% per month.
+- 986 candidates; median locked-test mean R/trade **0.006**, positive in 53%, t>2 in 0.0%; median trades/month 7.0
+- arithmetic: at 7.0 trades/month and 0.006 R/trade, risking 5% per trade yields ≈ 0.2% per month; the target needs ≈ 61% per month.
+
+### Positioning-data rules (open interest / long-short ratios) vs everything else, locked-test mean R/trade
+- positioning rules: n=13, median -0.038, share>0 15%; other: n=973, median 0.007, share>0 54%
+- reading: higher dev/validation pass rates for positioning rules did NOT carry to the locked test (edge ~0, |t|<2) -- the positioning history only starts in 2021 and its relationships are regime-specific.
 
 ## 4. Root causes (ranked)
 1. **No gross edge on short timeframes.** Median gross R/trade on 5m/15m is negative; the entry ideas (price/volume/flow/funding rules from public data) are not predictive at that horizon, and round-trip cost (0.10–0.16 R per trade) makes it worse. Searching more of the same on 5m is wasted compute — the director now suppresses cells whose recent screens show no gross edge.
