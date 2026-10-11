@@ -5,3 +5,9 @@
 - screen pass rate 8.4% (11312 screened); validation pass rate 51.3% (946 validated)
 - surrogate (learns from rejects): holdout corr 0.726, top-decile hit 0.55 vs base 0.095 (train-period net R > 0.05) on 10997 past screens
 - per market/timeframe (screens / screen-pass / validate-pass): BNB 15m: 332/4/0; BNB 1h: 242/11/2; BTC 15m: 1125/2/0; BTC 1h: 1712/246/156; BTC 5m: 1372/0/0; ETH 15m: 1301/24/1; ETH 1h: 2118/626/304; ETH 5m: 1877/1/0; SOL 15m: 363/3/3; SOL 1h: 335/32/19; XRP 15m: 303/0/0; XRP 1h: 235/0/0
+
+## Snapshot 2026-10-11 12:10 UTC (window: last 6h, non-4h)
+- experiments total 73916; qualified strategies: **0**; locked-test candidates in window: 128
+- screen pass rate 5.7% (7845 screened); validation pass rate 28.6% (448 validated)
+- surrogate (learns from rejects): holdout corr 0.816, top-decile hit 0.367 vs base 0.071 (train-period net R > 0.05) on 15256 past screens
+- per market/timeframe (screens / screen-pass / validate-pass): BNB 15m: 890/5/0; BNB 1h: 513/21/6; BTC 15m: 601/2/0; BTC 1h: 673/122/50; BTC 5m: 300/0/0; ETH 15m: 726/21/1; ETH 1h: 611/203/23; ETH 5m: 470/1/0; SOL 15m: 962/9/8; SOL 1h: 711/62/40; XRP 15m: 926/0/0; XRP 1h: 462/2/0

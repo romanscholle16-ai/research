@@ -124,7 +124,7 @@ class Director:
 
     def _gp_candidate(self, rng, sy, tf, evolve):
         it = self.store.get(sy, tf); meta = it["meta"]
-        avail = lambda n: G.available(n, True, bool(meta.get("has_funding")), it["F"].ref is not None)
+        avail = lambda n: G.available(n, True, bool(meta.get("has_funding")), it["F"].ref is not None, bool(meta.get("has_oi")))
         side = str(rng.choice(["long", "short"])); w = self._atom_weights(sy, tf, side); rule = None; how = "random"
         if evolve:
             el = self._gp_elites(sy, tf)
@@ -191,7 +191,7 @@ class Director:
         def draw(k, a):
             if "|".join(k) in cool: return -1
             ta = rng.beta(1 + a["screened"], 1 + max(a["n"] - a["screened"], 0)); tv = rng.beta(1 + a["vpass"], 1 + max(a["screened"] - a["vpass"], 0))
-            return ta * tv / (a["secs"] + 0.05) + 0.02 * TF_PRIOR.get(k[2], 0)
+            return (ta * tv / (a["secs"] + 0.05) + 0.02 * TF_PRIOR.get(k[2], 0)) * (3.0 if k[0] == "gp_rule" else 1.0)   # open-ended GP space is not exhausted (classic grids are)
         ranked = sorted(arms.items(), key=lambda kv: -draw(*kv)); use_sur = self.sur.ready(); over = 3 if use_sur else 1
         n_ex, n_ev, n_xp = [round(n * over * f) for f in SHARES[mode]]
         jobs, comp, tried = [], dict(exploit=0, evolve=0, explore=0, rejected_precheck=0), 0

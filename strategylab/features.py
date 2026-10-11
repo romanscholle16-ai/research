@@ -148,6 +148,14 @@ class Features:
             return ((imb - r.mean()) / r.std()).to_numpy()
         return self._memo(("imbz", n, w), f)
 
+    def pos_z(self, col, n=0, w=250):
+        """Positioning feature z-score (needs Binance 'metrics'): n>0 -> z of the n-bar log change (open interest); n=0 -> z of log level (long/short ratios). NaN where unavailable."""
+        def f():
+            if col not in self.df or self.df[col].isna().all(): return np.full(self.n, np.nan)
+            x = np.log(self.df[col].where(self.df[col] > 0)); x = x.diff(n) if n else x
+            r = x.rolling(w, min_periods=w // 2); return ((x - r.mean()) / r.std()).to_numpy()
+        return self._memo(("posz", col, n, w), f)
+
     def atr_frac_med(self, lo, hi, n=14):
         """Median ATR/price over [lo,hi): cheap per-timeframe volatility level (needs no signals)."""
         def f():

@@ -36,6 +36,10 @@ for n in BRK_N:
     ATOMS[f"brk{n}_up"] = ([0], ""); ATOMS[f"brk{n}_down"] = ([0], "")
 ATOMS["session_in"] = ([0, 1, 2], ""); ATOMS["volz_gt"] = ([1.5, 2.5], "")
 ATOMS["ratioz_gt"] = ([1.5, 2.0], "ref"); ATOMS["ratioz_lt"] = ([1.5, 2.0], "ref")
+for n in (6, 24):
+    ATOMS[f"oichg{n}_gt"] = ([1.0, 1.5, 2.0], "oi"); ATOMS[f"oichg{n}_lt"] = ([1.0, 1.5, 2.0], "oi")
+for nm in ("lstop", "lsacct", "tkls"):
+    ATOMS[f"{nm}_gt"] = ([1.0, 1.5, 2.0], "oi"); ATOMS[f"{nm}_lt"] = ([1.0, 1.5, 2.0], "oi")
 ATOMS["fund_gt"] = ([0.8, 0.9], "funding"); ATOMS["fund_lt"] = ([0.2, 0.1], "funding")
 
 
@@ -65,6 +69,10 @@ def atom_array(F, name: str, thr) -> np.ndarray:
     if name == "session_in": return np.isin(F.hour, SESSIONS[int(thr)])
     if name == "volz_gt": return cmp(F.vol_z(50), "gt", thr)
     if name.startswith("ratioz"): z = F.ratio_z(250); return cmp(z, "gt", thr) if name.endswith("gt") else cmp(z, "lt", -thr)
+    if name.startswith("oichg"):
+        n = int(name[5:].split("_")[0]); z = F.pos_z("oi", n); return cmp(z, "gt", thr) if name.endswith("gt") else cmp(z, "lt", -thr)
+    for nm, col in (("lstop", "ls_top"), ("lsacct", "ls_acct"), ("tkls", "tk_ls")):
+        if name.startswith(nm + "_"): z = F.pos_z(col, 0); return cmp(z, "gt", thr) if name.endswith("gt") else cmp(z, "lt", -thr)
     if name.startswith("fund"): p = F.fund_pct(500); return cmp(p, "gt", thr) if name.endswith("gt") else cmp(p, "lt", thr)
     raise KeyError(name)
 
@@ -88,9 +96,9 @@ def validate_rule(rule, side) -> list[str]:
     return errs
 
 
-def available(name, has_taker=True, has_funding=True, has_ref=True):
+def available(name, has_taker=True, has_funding=True, has_ref=True, has_oi=True):
     req = ATOMS[name][1]
-    return not ((req == "taker" and not has_taker) or (req == "funding" and not has_funding) or (req == "ref" and not has_ref))
+    return not ((req == "taker" and not has_taker) or (req == "funding" and not has_funding) or (req == "ref" and not has_ref) or (req == "oi" and not has_oi))
 
 
 def describe(rule, side):

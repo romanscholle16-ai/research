@@ -130,3 +130,17 @@ def test_surrogate_learns_from_rejects_and_prefers_better_specs(home):
              (f"S{i}", "screen", "BTCUSDT", "1h", _j.dumps(dict(mean_R=(0.15 if stop >= 3 else -0.2) + float(rng.normal(0, 0.03)), n=200)),))
     s = Surrogate(db); assert s.fit() and s.stats["holdout_corr"] > 0.5
     assert s.score(tspec(stop_atr=6.0), "BTCUSDT", "1h", kappa=0) > s.score(tspec(stop_atr=0.5), "BTCUSDT", "1h", kappa=0)
+
+
+def test_positioning_atoms_are_causal_and_gated():
+    import numpy as _np, pandas as _pd
+    from strategylab import grammar as _G
+    from strategylab.features import Features
+    r = _np.random.default_rng(1); n = 3000
+    idx = _pd.date_range("2022-01-01", periods=n, freq="1h", tz="UTC"); c = 100 + _np.cumsum(r.normal(0, 1, n))
+    df = _pd.DataFrame(dict(open=c, high=c + 1, low=c - 1, close=c, volume=1.0, taker_buy_volume=0.5, funding=0.0,
+                            oi=1e9 * (1 + 0.1 * _np.sin(_np.arange(n) / 50) + r.normal(0, .01, n)), ls_top=1 + r.normal(0, .1, n).cumsum() * .01 + 1, ls_acct=1.2, tk_ls=1.0), index=idx)
+    full = _G.atom_array(Features(df), "oichg6_gt", 1.0); cut = _G.atom_array(Features(df.iloc[:2000]), "oichg6_gt", 1.0)
+    assert (full[:2000] == cut).all()                                  # no look-ahead: prefix of full == computation on truncated data
+    nan_df = df.drop(columns=["oi"]); assert not _G.atom_array(Features(nan_df), "oichg6_gt", 1.0).any()   # missing data => never fires
+    assert not _G.available("oichg6_gt", has_oi=False) and _G.available("oichg6_gt", has_oi=True)

@@ -56,6 +56,24 @@ def download_month(symbol, kind, tf, ym):
     return out
 
 
+def fetch_metrics(symbol, start="2021-01-01", end=None, workers=8, log=print):
+    """Binance USD-M daily 'metrics' (5m open interest, top-trader & account long/short ratios, taker long/short volume ratio): positioning data
+    not present in klines.  Cached per day as csv.gz; days that do not exist are remembered as empty markers."""
+    from concurrent.futures import ThreadPoolExecutor
+    d = data_dir() / symbol / "metrics"; d.mkdir(parents=True, exist_ok=True)
+    end = end or time.strftime("%Y-%m-%d", time.gmtime(time.time() - 2 * 86400))
+    days = [str(x.date()) for x in pd.date_range(start, end, freq="D")]
+    def one(day):
+        out = d / f"m-{day}.csv.gz"; miss = d / f"m-{day}.none"
+        if out.exists() or miss.exists(): return 0
+        raw = _get(f"https://data.binance.vision/data/futures/um/daily/metrics/{symbol}/{symbol}-metrics-{day}.zip")
+        if raw is None: miss.write_text(""); return 0
+        with zipfile.ZipFile(io.BytesIO(raw)) as z: pd.read_csv(z.open(z.namelist()[0])).to_csv(out, index=False, compression="gzip")
+        return 1
+    with ThreadPoolExecutor(workers) as ex: n = sum(ex.map(one, days))
+    log(f"{symbol} metrics: {n} new day files"); return n
+
+
 def _read_one(f, kind):
     df = pd.read_csv(f, header=None, dtype=str)
     if not df.empty and pd.to_numeric(df.iloc[0, 0], errors="coerce") != pd.to_numeric(df.iloc[0, 0], errors="coerce"):
@@ -122,7 +140,7 @@ def load_real(symbol, tf, base_tf="1m"):
     """Return (df, meta). df: UTC index; columns OHLCV, taker_buy_volume, funding (rate of the 8h period
     applicable at each bar, only known values - forward filled from the *settled* time)."""
     cdir = data_dir() / symbol
-    srcs = sorted((cdir / "klines").glob(f"{base_tf}-*.csv.gz")) + sorted((cdir / "fundingRate").glob("f-*.csv.gz"))
+    srcs = sorted((cdir / "klines").glob(f"{base_tf}-*.csv.gz")) + sorted((cdir / "fundingRate").glob("f-*.csv.gz")) + sorted((cdir / "metrics").glob("m-*.csv.gz"))
     if not srcs: raise FileNotFoundError(f"no data for {symbol}; run data fetch")
     sig = f"{len(srcs)}-{int(max(f.stat().st_mtime for f in srcs))}"
     cache = cdir / f"cache-{tf}-{sig}.pkl"
@@ -141,11 +159,23 @@ def load_real(symbol, tf, base_tf="1m"):
         fs = pd.Series(f["last_funding_rate"].values, index=pd.to_datetime(f["calc_time"], unit="ms", utc=True))
         # funding rate becomes known at settlement time; reindex with ffill (no look-ahead)
         df["funding"] = fs.reindex(df.index.union(fs.index)).ffill().reindex(df.index).fillna(0.0)
+    mfiles = sorted((cdir / "metrics").glob("m-*.csv.gz")); has_oi = 0
+    for col in ("oi", "ls_top", "ls_acct", "tk_ls"): df[col] = np.nan
+    if mfiles:
+        m = pd.concat([pd.read_csv(f) for f in mfiles], ignore_index=True).drop_duplicates("create_time").sort_values("create_time")
+        m.index = pd.to_datetime(m["create_time"], utc=True) + pd.Timedelta(minutes=5)      # a 5m snapshot is only usable AFTER its interval closes (conservative, causal)
+        m = m.rename(columns=dict(sum_open_interest_value="oi", sum_toptrader_long_short_ratio="ls_top", count_long_short_ratio="ls_acct", sum_taker_long_short_vol_ratio="tk_ls"))
+        m = m[["oi", "ls_top", "ls_acct", "tk_ls"]].astype(float).replace([np.inf, -np.inf], np.nan)
+        m = m[~m.index.duplicated()]
+        # value known at bar CLOSE: last snapshot available strictly before the next bar opens
+        agg = m.resample(f"{TF_MIN[tf]}min", label="left", closed="left").last()
+        for col in ("oi", "ls_top", "ls_acct", "tk_ls"): df[col] = agg[col].reindex(df.index)
+        has_oi = int(df["oi"].notna().any())
     step = pd.Timedelta(minutes=TF_MIN[tf])
     gaps = int((df.index.to_series().diff() > step * 1.5).sum())
     meta = dict(id=f"{symbol}-{tf}-{df.index[0]:%Y%m%d}-{df.index[-1]:%Y%m%d}-{len(df)}", symbol=symbol, timeframe=tf,
                 source="data.binance.vision USD-M monthly archive (proxy for BTCC)", start_ts=int(df.index[0].timestamp()),
-                end_ts=int(df.index[-1].timestamp()), rows=len(df), gaps=gaps, has_funding=int(has_f), has_taker=1,
+                end_ts=int(df.index[-1].timestamp()), rows=len(df), gaps=gaps, has_funding=int(has_f), has_taker=1, has_oi=has_oi,
                 synthetic=0, notes="No OI/liquidation/orderbook/bid-ask history in this dataset; taker-buy volume used as CVD proxy.")
     for old in cdir.glob(f"cache-{tf}-*.pkl"): old.unlink()
     pd.to_pickle((df, meta), cache)
