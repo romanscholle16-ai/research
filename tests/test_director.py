@@ -167,3 +167,13 @@ def test_surrogate_validation_head_prefers_out_of_sample_winners(home):
             db.x("INSERT INTO experiments(strategy_id,stage,symbol,timeframe,started,finished,status,metrics_json,synthetic) VALUES(?,?,?,?,0,0,'pass',?,0)", (f"V{i}", stg, "BTCUSDT", "1h", _j.dumps(m)))
     s = Surrogate(db); assert s.fit() and s.wv is not None
     assert s.score(tspec(stop_atr=6.0), "BTCUSDT", "1h", kappa=0) > s.score(tspec(stop_atr=1.0), "BTCUSDT", "1h", kappa=0)
+
+
+def test_feature_memo_is_bounded():
+    import numpy as _np, pandas as _pd
+    from strategylab.features import Features
+    n = 500; idx = _pd.date_range("2022-01-01", periods=n, freq="1h", tz="UTC"); c = 100 + _np.cumsum(_np.random.default_rng(0).normal(0, 1, n))
+    F = Features(_pd.DataFrame(dict(open=c, high=c + 1, low=c - 1, close=c, volume=1.0, taker_buy_volume=.5, funding=0.0), index=idx))
+    for k in range(Features.MEMO_MAX * 3): F._memo(("k", k), lambda: _np.zeros(n))
+    assert len(F._c) <= Features.MEMO_MAX
+    assert F.atr(14).shape == (n,)
