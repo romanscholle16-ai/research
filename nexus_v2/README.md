@@ -37,3 +37,10 @@ per-user, non-elevated Scheduled Task (ON LOGON). On non-Windows hosts it prints
 | `nexus/runtime.py`, `worker.py` | supervisor, children, health |
 | `nexus/server.py`, `ui/index.html` | dashboard (127.0.0.1 only) |
 | `docs/` | architecture, operations, methodology, limitations, test evidence |
+
+## Status (honest summary)
+* 92 automated tests pass (0 skipped), including real-process fault-injection drills: see `docs/TESTING.md`.
+* **No strategy is qualified; nothing here demonstrates a profitable edge.** In the first live run, in-sample "promising" strategies — and even a random-entry null model —
+  were screened out by walk-forward validation. A protocol weakness found 15 minutes after launch was fixed under change control (`docs/CHANGELOG.md`).
+* **Not done / unverified:** Windows execution & auto-start, BTCC contract/leverage verification (goals 2–4 stay "?"), a 7-day soak (`docs/SOAK_LOG.md`),
+  paper-forward on real elapsed time. See `docs/KNOWN_LIMITATIONS.md`.

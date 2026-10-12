@@ -40,7 +40,7 @@ def sig(n, at, side, stop_dist, tp_r=0.0, max_hold=10, exit_long=None, exit_shor
                    exit_long=exit_long, exit_short=exit_short)
 
 
-def synth_arrays(n=40000, seed=7, regime_flip=1 / 300, drift=0.0006, sigma=0.0035, start=1500.0, t0=1_609_459_200_000):
+def synth_arrays(n=40000, seed=7, regime_flip=1 / 150, drift=0.0010, sigma=0.0035, start=1500.0, t0=1_609_459_200_000):
     """Synthetic perpetual-like 1h bars with PERSISTENT drift regimes (a planted trend edge). Used only by tests.
     Prefix-stable: the first m bars are identical for any n >= m (independent RNG streams, sequential draws)."""
     ss = np.random.SeedSequence(seed).spawn(5)

@@ -79,9 +79,14 @@ def test_end_to_end_campaign_and_independence_from_caller(rt):
     assert sysinfo.pid_alive(sup)
     ch = _children(rt)
     assert {"web", "scheduler", "worker-1", "worker-2", "guardian1", "guardian2", "guardian3"} <= set(ch)
+    # regression: worker heartbeat thread must keep ticking (a cross-thread sqlite bug once made it silently fail)
+    t_a = {p["name"]: p["heartbeat"] for p in _children(rt).values() if p["name"].startswith("worker")}
+    time.sleep(11)
+    t_b = {p["name"]: p["heartbeat"] for p in _children(rt).values() if p["name"].startswith("worker")}
+    assert t_b and all(t_b[n] > t_a[n] + 4 for n in t_a), (t_a, t_b)
+    assert c.execute("SELECT COUNT(*) FROM incidents WHERE error LIKE '%unresponsive%'").fetchone()[0] == 0
     n1 = c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
-    time.sleep(8)
-    assert c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > n1                     # still progressing with no caller attached
+    rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > n1, 90)      # still progressing with no caller attached (pacing: <=10/agent/min)
     # durable counts == raw rows (no double counting)
     assert c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == c.execute("SELECT COUNT(DISTINCT strategy_id) FROM experiments").fetchone()[0]
     ov = json.loads(subprocess.run(["curl", "-s", f"http://127.0.0.1:{rt.env['NEXUS_PORT']}/api/overview"], capture_output=True, text=True).stdout)
@@ -99,7 +104,7 @@ def test_worker_killed_mid_task_is_restarted_without_double_counting(rt):
     assert new["pid"] != victim["pid"]
     assert c.execute("SELECT COUNT(*) FROM incidents WHERE fingerprint='exit:worker-1'").fetchone()[0] >= 1       # cause recorded
     n = c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
-    rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > n + 10, 60)
+    rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > n + 10, 120)
     assert c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == c.execute("SELECT COUNT(DISTINCT strategy_id||dataset_version) FROM experiments").fetchone()[0]
     assert not c.execute("SELECT 1 FROM jobs WHERE status='running' AND lease_pid=?", (victim["pid"],)).fetchone()   # nothing stuck on the dead pid
     assert db.integrity_check(c)[0]
@@ -141,7 +146,7 @@ def test_supervisor_killed_reports_dead_then_recovers_cleanly(rt):
         return True
     rt.wait(only_new, 60)
     rt.wait(lambda: len([n for n in _children(rt) if n.startswith("worker")]) == 2, 60)
-    rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > done_before + 10, 60)   # completed work kept, new work continues
+    rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > done_before + 10, 150)  # completed work kept, new work continues
     assert db.integrity_check(c)[0]
 
 

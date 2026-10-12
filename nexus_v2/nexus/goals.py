@@ -108,10 +108,10 @@ def compute(conn, sid=None):
             row(6, FAIL, f"OOS net expectancy {wf.get('exp_r',0):+.3f}R over {wf.get('trades',0)} trades (t={wf.get('t',0):.2f}, 90% CI [{wf.get('ci_lo',0):+.3f}, {wf.get('ci_hi',0):+.3f}])",
                 "walk-forward validation", "Failed walk-forward: " + "; ".join(wf.get("failures", [])[:2]), "; ".join(wf.get("failures", [])[:3]))
         else:
-            ok = gates.get("robustness") == "passed"
+            ok = gates.get("robustness") == "passed" and gates.get("holdout") == "passed"
             row(6, OK if ok else PART, f"OOS net expectancy {wf.get('exp_r',0):+.3f}R over {wf.get('trades',0)} trades (t={wf.get('t',0):.2f} vs bar {wf.get('need_t',0):.2f})",
-                "walk-forward" + (" + robustness" if ok else ""), "Positive after modeled fees, funding and slippage on data not used for selection.",
-                "" if ok else "Robustness analysis not yet passed.")
+                "walk-forward + robustness + holdout" if ok else "walk-forward", "Positive after modeled fees, funding and slippage on data not used for selection.",
+                "" if ok else "Robustness and the single-look protected holdout must both pass.")
     elif cand:
         row(6, PART if cand["dev_exp_r"] and cand["dev_exp_r"] > 0 else UNK, f"in-sample development expectancy {cand['dev_exp_r']:+.3f}R ({cand['dev_trades']} trades) - exploratory only",
             "S2 screen", "In-sample result only; says nothing about out-of-sample expectancy.", "Walk-forward validation pending.")

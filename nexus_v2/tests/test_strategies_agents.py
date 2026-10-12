@@ -102,7 +102,7 @@ def test_scheduler_dedupes_budgets_and_logs_reasons(world):
     n1 = scheduler.tick(conn, random.Random(3))
     assert 0 < n1 <= 12 * 10
     per_agent = {r[0]: r[1] for r in conn.execute("SELECT agent,COUNT(*) FROM scheduler_log WHERE mode!='skip' GROUP BY agent")}
-    assert max(per_agent.values()) <= 12 // 6 + 0 or max(per_agent.values()) <= 2                    # paced: 1/6 of hourly per 10 min
+    assert max(per_agent.values()) <= 1                                                              # paced: ceil(12/60)=1 per rolling minute
     assert conn.execute("SELECT COUNT(*) FROM scheduler_log WHERE why!='' AND would_change!=''").fetchone()[0] >= n1
     dedupes = [r[0] for r in conn.execute("SELECT dedupe_key FROM jobs")]
     assert len(dedupes) == len(set(dedupes))

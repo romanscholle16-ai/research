@@ -35,7 +35,10 @@ def _record(conn, sid, stage, passed, n_trades, mt, dsv, runs):
 
 
 def _wf_candidates_tested(conn):
-    return max(2, conn.execute("SELECT COUNT(DISTINCT strategy_id) FROM validations WHERE stage='walkforward'").fetchone()[0] + 1)
+    """M for the multiple-testing bar: candidates already sent to walk-forward (+1), never below the pre-registered expectation,
+    so the bar does not depend on how early in the campaign a candidate happens to arrive."""
+    seen = conn.execute("SELECT COUNT(DISTINCT strategy_id) FROM validations WHERE stage='walkforward'").fetchone()[0] + 1
+    return max(seen, T["wf_expected_candidates"])
 
 
 # ------------------------------------------------------------------------------ stage 3 ---------
@@ -75,6 +78,29 @@ def walkforward(conn, sid, ns, m, split):
     mt = {"trades": n, "exp_r": mean, "t": t, "ci_lo": lo, "ci_hi": hi, "need_t": need_t, "M": M, "folds": folds,
           "positive_folds": pos, "purge_bars": purge, "failures": fails, "region": [start, de]}
     return passed, mt, runs, res_all
+
+
+# ------------------------------------------------------------------------ randomisation test ---------
+def null_test(ns, m, i0, i1, k, seed=11):
+    """Random entries (same rate, stops, targets, holds) vs the candidate on region [i0,i1). p = P(null mean R >= candidate mean R)."""
+    res, mt, pm = R.eval_region(ns, m, 0 if False else i0, i1)
+    if mt["trades"] < 10:
+        return None
+    sig = S.signals_for(ns, pm)
+    rng = np.random.default_rng(seed)
+    prob = mt["trades"] / max(1, i1 - i0)
+    acct, costs = R.account_from(ns), R.costs_default()
+    nulls = []
+    for _ in range(k):
+        hit = rng.random(i1) < prob
+        d = rng.random(i1) < 0.5
+        side = np.where(hit, np.where(d, 1, -1), 0).astype(np.int8)
+        s2 = engine.Signals(side=side, stop_dist=sig.stop_dist, tp_r=sig.tp_r, max_hold=sig.max_hold)
+        rr = engine.run_backtest(pm, s2, acct, costs, i0, i1)
+        nulls.append(float(rr.trades["r"].mean()) if len(rr.trades["r"]) else -1.0)
+    nulls = np.array(nulls)
+    return {"p_value": float((1 + (nulls >= mt["expectancy_r"]).sum()) / (k + 1)), "cand_exp_r": mt["expectancy_r"], "null_mean": float(nulls.mean()),
+            "null_p95": float(np.quantile(nulls, .95)), "k": k, "region": [i0, i1]}
 
 
 # ------------------------------------------------------------------------------ stage 4 ---------
@@ -147,6 +173,12 @@ def robustness(conn, sid, ns, m, split):
         fails.append(f"95th pct MC drawdown {mc['dd_p95']:.1%} > {T['max_drawdown']:.0%}")
     if mc["p_ruin"] > T["max_risk_of_ruin"]:
         fails.append(f"risk of ruin {mc['p_ruin']:.1%} > {T['max_risk_of_ruin']:.0%}")
+    # out-of-sample randomisation test on the purged walk-forward region (selection-free for this candidate)
+    nt = null_test(ns, m, split["explore_end"] + _purge(ns), de, T["adv_null_runs"])
+    out["randomisation_oos"] = nt
+    runs.append(("randomisation_nulls", 0))
+    if nt is None or nt["p_value"] > T["adv_min_p"]:
+        fails.append("out-of-sample randomisation test: " + ("too few trades" if nt is None else f"p={nt['p_value']:.3f} > {T['adv_min_p']} (random entries with the same exits do as well)"))
     out["failures"] = fails
     return int(not fails), out, runs, (res, pm)
 
@@ -159,6 +191,7 @@ def holdout(conn, sid, ns, m, split):
     if mt["trades"] < T["ho_min_trades"]: fails.append(f"holdout trades {mt['trades']} < {T['ho_min_trades']}")
     if mt["expectancy_r"] <= 0: fails.append(f"holdout net expectancy {mt['expectancy_r']:+.3f}R <= 0")
     if mt["pf"] < T["ho_min_pf"]: fails.append(f"holdout PF {mt['pf']:.2f} < {T['ho_min_pf']}")
+    if mt["t_stat"] < T["ho_min_t"]: fails.append(f"holdout t={mt['t_stat']:.2f} < {T['ho_min_t']} (not distinguishable from zero)")
     if mt["max_dd"] > T["max_drawdown"]: fails.append(f"holdout max drawdown {mt['max_dd']:.1%} > {T['max_drawdown']:.0%}")
     mt["failures"] = fails
     conn.execute("UPDATE holdout_access SET passed=? WHERE strategy_id=? AND passed=0", (int(not fails), sid))
@@ -204,7 +237,10 @@ def run_validation(conn, sid, progress=lambda s: None):
     ns = S.normalize(json.loads(row[0]))
     m, split = R.get_market(conn, ns)
     dsv = m.version
-    done = {r["stage"]: r for r in conn.execute("SELECT stage,passed FROM validations WHERE strategy_id=?", (sid,))}
+    # only evidence recorded under the CURRENT thresholds+engine counts; superseded evidence is stale and the stage is re-run
+    # (the holdout cannot be re-run: single look - see data.holdout_region)
+    done = {r["stage"]: r for r in conn.execute("SELECT stage,passed FROM validations WHERE strategy_id=? AND thresholds_hash=? AND engine_version=? ORDER BY id",
+                                                (sid, config.trusted_hash(), ENGINE_VERSION))}
     notes = []
     # stage 3
     if "walkforward" not in done:
@@ -290,11 +326,12 @@ def adversarial_test(conn, sid, k=100, seed=11):
     nulls = np.array(nulls)
     p = float((1 + (nulls >= mt["expectancy_r"]).sum()) / (k + 1))
     out = {"p_value": p, "cand_exp_r": mt["expectancy_r"], "null_mean": float(nulls.mean()), "null_p95": float(np.quantile(nulls, .95)),
-           "k": k, "verdict": "distinguishable from random entries" if p <= 0.05 else "NOT distinguishable from random entries",
-           "failures": [] if p <= 0.05 else [f"adversarial p={p:.2f} > 0.05"]}
+           "k": k, "IN_SAMPLE_selection_biased": True,
+           "verdict": "in-sample only (candidate was SELECTED on this region, so this is not evidence); the gating test runs out-of-sample in robustness",
+           "failures": []}
     with db.tx(conn):
         conn.execute("INSERT INTO validations(strategy_id,stage,passed,n_trades,metrics_json,thresholds_hash,engine_version,dataset_version,"
-                     "created_at) VALUES(?,?,?,?,?,?,?,?,?)", (sid, "adversarial", int(p <= 0.05), mt["trades"], json.dumps(R.jd(out)),
+                     "created_at) VALUES(?,?,?,?,?,?,?,?,?)", (sid, "adversarial", -1, mt["trades"], json.dumps(R.jd(out)),
                                                             config.trusted_hash(), ENGINE_VERSION, m.version, time.time()))
         conn.execute("INSERT INTO backtest_runs(kind,strategy_id,experiment_id,trades,created_at) VALUES('adversarial_null',?,NULL,?,?)",
                      (sid, int(0), time.time()))

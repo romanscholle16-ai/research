@@ -43,7 +43,9 @@ def h_data_update(conn, job, p, progress):
     out = {}
     for sym in config.DATA["symbols"]:
         progress(f"sync {sym}")
-        out[sym] = data.sync_symbol(conn, sym)
+        out[sym] = data.sync_symbol(conn, sym, abort=STOP.is_set)
+        if out[sym].get("aborted"):
+            raise InterruptedError("data sync interrupted by stop request")
         if out[sym].get("failed", 0) and not out[sym].get("ok", 0):
             raise RuntimeError(f"data sync failed for {sym}: {out[sym]}")
         if out[sym].get("ok", 0) or not conn.execute("SELECT 1 FROM datasets WHERE symbol=?", (sym,)).fetchone():
@@ -65,19 +67,19 @@ def run(name, once=False, max_jobs=None):
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _sig)
     conn = db.open_db()
-    hb_conn = db.connect()
     pid = os.getpid()
     cur = {"id": None}
     n_done = 0
 
     def beat():
+        hb_conn = db.connect()           # connection must be created IN this thread (sqlite3 forbids cross-thread use)
         while not STOP.is_set():
             try:
-                hb_conn.execute("UPDATE processes SET heartbeat=?, pid=? WHERE name=?", (time.time(), pid, name))
+                hb_conn.execute("UPDATE processes SET heartbeat=? WHERE name=? AND pid=?", (time.time(), name, pid))     # own row only
                 if cur["id"]:
                     jobs.heartbeat(hb_conn, cur["id"])
-            except Exception:
-                pass
+            except Exception as e:
+                LG.warning("heartbeat update failed: %s", e)
             STOP.wait(5.0)
     threading.Thread(target=beat, daemon=True).start()
     LG.info("worker %s started pid=%s", name, pid)
@@ -89,7 +91,7 @@ def run(name, once=False, max_jobs=None):
         desired = db.get_state(conn, "desired", "stopped")
         throttle = db.get_state(conn, "throttle", "none")
         if desired != "running" or throttle == "high" or db.get_state(conn, f"worker_stop:{name}") == "1":
-            if desired == "stopped" or db.get_state(conn, f"worker_stop:{name}") == "1":
+            if once or desired == "stopped" or db.get_state(conn, f"worker_stop:{name}") == "1":
                 break
             STOP.wait(2.0)
             continue
@@ -107,8 +109,15 @@ def run(name, once=False, max_jobs=None):
         cur["id"] = job["id"]
         p = json.loads(job["payload"])
         try:
-            res = HANDLERS[job["type"]](conn, job, p, lambda msg, j=job["id"]: jobs.heartbeat(conn, j, msg))
+            def prog(msg, j=job["id"]):
+                jobs.heartbeat(conn, j, msg)
+                # stage boundary: yield promptly to a stop request or a newer supervisor (finished stages are already committed)
+                if STOP.is_set() or runtime_mod.child_should_exit(conn):
+                    raise InterruptedError("stop/supersede requested between stages")
+            res = HANDLERS[job["type"]](conn, job, p, prog)
             jobs.complete(conn, job["id"], res)
+        except InterruptedError:
+            conn.execute("UPDATE jobs SET status='pending', attempts=MAX(0,attempts-1), lease_owner=NULL, error='interrupted by stop' WHERE id=?", (job["id"],))
         except Exception as e:
             tb = traceback.format_exc()
             LG.error("job %s (%s) failed: %s", job["id"], job["type"], tb[-1500:])
@@ -123,6 +132,6 @@ def run(name, once=False, max_jobs=None):
         if max_jobs and n_done >= max_jobs:
             break
     STOP.set()
-    conn.execute("UPDATE processes SET status='stopped', heartbeat=? WHERE name=?", (time.time(), name))
+    conn.execute("UPDATE processes SET status='stopped', heartbeat=? WHERE name=? AND pid=?", (time.time(), name, pid))   # never touch a successor's row
     LG.info("worker %s exiting after %d jobs", name, n_done)
     return n_done

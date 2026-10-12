@@ -21,12 +21,12 @@ bars appended after the holdout end are **forward-only** (paper-forward). Append
 ## Stages
 1. **S1** quick screen (first quarter of exploration) → 2. **S2** development (full exploration): ≥80 trades, expectancy>0, t≥1.5, PF≥1.05.
 3. **Walk-forward**: 4 consecutive folds after the purge gap; pooled OOS trades ≥60; expectancy>0; block-bootstrap 90% CI lower bound >0;
-   t ≥ max(1.2, √(2 ln M)) where M = number of candidates ever sent to walk-forward (multiple-testing control); ≥60% positive folds.
+   t ≥ max(1.2, √(2 ln M)) with **M = max(candidates seen, 50)** — a pre-registered floor, so the bar is ≥ 2.80 from the very first candidate (an arrival-order-dependent bar let a chance candidate through in the first live run; see CHANGELOG); ≥60% positive folds.
 4. **Robustness** (development data): ≥120 trades; ≥60% of parameter neighbours profitable; positive under 2× fees+slippage and 3× funding;
    positive after removing the 3 best trades; non-negative in ≥2 of 3 volatility regimes; Monte-Carlo block bootstrap: 95th-pct drawdown ≤35%,
-   risk of ruin (equity ≤50% of start in ~6 months of trades) ≤5%; no liquidations.
+   risk of ruin (equity ≤50% of start in ~6 months of trades) ≤5%; no liquidations; **out-of-sample randomisation test** on the purged walk-forward region: 200 random-entry runs with the *same* stops/targets/holds must do worse than the candidate (p ≤ 0.05) — on trending data random-direction entries with stops are themselves profitable, so exit-rule drift is not accepted as entry skill.
 5. **Protected holdout**: single look per candidate, only after stages 3–4 pass, only via `validation.holdout_stage`, global budget of 12 looks,
-   every attempt (granted or denied) logged. Pass: ≥30 trades, expectancy>0, PF≥1, drawdown ≤35%.
+   every attempt (granted or denied) logged. Pass: ≥30 trades, expectancy>0, **t ≥ 1.0**, PF≥1, drawdown ≤35%.
 6. **Paper-forward**: bars after the holdout end; ≥30 days, ≥10 trades, expectancy>0, PF≥1. Needs real elapsed time.
 7. **Qualified** only when stages 3–6 pass *and* Guardian 3 independently reproduces the S2 result, confirms exactly one holdout look and a
    causality probe. `qualify.assess()` is a pure function of stored evidence; evidence recorded under different thresholds/engine is "stale".

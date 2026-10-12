@@ -73,7 +73,7 @@ def _months(start_month, upto=None):
             y, m = y + 1, 1
 
 
-def sync_symbol(conn, symbol, tf="1h", start_month=None, kinds=("klines", "fundingRate"), sleep=time.sleep, now=None):
+def sync_symbol(conn, symbol, tf="1h", start_month=None, kinds=("klines", "fundingRate"), sleep=time.sleep, now=None, abort=None):
     """Incrementally download all missing monthly files (+ daily files for the current month)."""
     start_month = start_month or config.DATA["start_month"]
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -92,6 +92,9 @@ def sync_symbol(conn, symbol, tf="1h", start_month=None, kinds=("klines", "fundi
                 nm = f"{symbol}-{tf}-{per}" if kind == "klines" else f"{symbol}-fundingRate-{per}"
                 if gran == "daily" and kind == "fundingRate":
                     continue  # funding is published monthly only
+                if abort and abort():                 # stop requested: finished files are already recorded; resume later
+                    stats["aborted"] = True
+                    return stats
                 dest = d / f"{nm}.zip"
                 row = conn.execute("SELECT verified FROM data_files WHERE path=?", (str(dest),)).fetchone()
                 if row is not None and dest.exists():

@@ -286,7 +286,7 @@ def serve(stop=None, port=PORT):
     while not (stop and stop["v"]):
         srv.handle_request()
         try:
-            conn.execute("UPDATE processes SET heartbeat=? WHERE name='web'", (time.time(),))
+            conn.execute("UPDATE processes SET heartbeat=? WHERE name='web' AND pid=?", (time.time(), os.getpid()))
             if runtime.child_should_exit(conn):
                 break
         except Exception:

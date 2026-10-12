@@ -7,7 +7,7 @@ import conftest
 SPEC = S.make_spec("ema_cross", "ETHUSDT", "1h", {"fast": 12, "slow": 50, "stop_atr": 3.0, "max_hold": 96})
 
 
-def _world(conn, home, n=40000, drift=0.0006, cls=None, seed=7):
+def _world(conn, home, n=40000, drift=0.0010, cls=None, seed=7):
     conftest.write_dataset(home, "ETHUSDT", conftest.synth_arrays(n, seed, drift=drift), cls=cls)
     conftest.write_dataset(home, "BTCUSDT", conftest.synth_arrays(n, seed + 1, drift=drift), cls=cls)
     data._CACHE.clear(); R._EV.clear()
@@ -188,3 +188,75 @@ def test_bootstrap_and_montecarlo_sane():
     assert mc["p_ruin"] < 0.02 and mc["dd_p95"] < 0.35
     bad = metrics.monte_carlo(rng.normal(-0.3, 1.0, 400), 0.05, 300.0, 500, 200, 0.5)
     assert bad["p_ruin"] > 0.3
+
+
+# ---------------------------------------------------------------- calibration regressions (post-launch finding) ---------
+def test_multiple_testing_bar_is_independent_of_arrival_order(conn, home):
+    """Early candidates must not enjoy a lenient bar: a fresh DB (M_seen=1) still demands sqrt(2 ln 50) ~ 2.80."""
+    import math
+    assert V._wf_candidates_tested(conn) >= config.THRESHOLDS["wf_expected_candidates"] == 50
+    sid = _world(conn, home)
+    from nexus import validation
+    passed, mt, *_ = validation.walkforward(conn, sid, S.normalize(SPEC), *R.get_market(conn, S.normalize(SPEC)))
+    assert mt["need_t"] == pytest.approx(math.sqrt(2 * math.log(50)), rel=1e-6) and mt["M"] == 50
+
+
+def test_exit_rule_drift_is_not_mistaken_for_entry_skill(conn, home):
+    """Weak trending data: random entries with the same stops/holds are also profitable, so a plain EMA cross must FAIL the
+    out-of-sample randomisation test even though it passes walk-forward."""
+    conftest.write_dataset(home, "ETHUSDT", conftest.synth_arrays(40000, 7, drift=0.0006, regime_flip=1 / 300))
+    conftest.write_dataset(home, "BTCUSDT", conftest.synth_arrays(40000, 8, drift=0.0006, regime_flip=1 / 300))
+    data._CACHE.clear(); R._EV.clear()
+    sid = S.canonical_id(SPEC); R.persist(conn, SPEC, R.evaluate(conn, SPEC), "t")
+    notes = V.run_validation(conn, sid)
+    assert notes[0] == "walkforward=PASS" and notes[1] == "robustness=FAIL"
+    f = json.loads(conn.execute("SELECT metrics_json FROM validations WHERE strategy_id=? AND stage='robustness'", (sid,)).fetchone()[0])["failures"]
+    assert any("randomisation" in x for x in f)
+    assert conn.execute("SELECT COUNT(*) FROM holdout_access WHERE passed>=0").fetchone()[0] == 0     # the holdout was NOT spent on it
+
+
+def test_holdout_requires_statistical_distinguishability(conn, home, monkeypatch):
+    sid = _world(conn, home)
+    monkeypatch.setitem(config.THRESHOLDS, "ho_min_t", 1e6)
+    V.run_validation(conn, sid)
+    mt = json.loads(conn.execute("SELECT metrics_json FROM validations WHERE strategy_id=? AND stage='holdout'", (sid,)).fetchone()[0])
+    assert any("not distinguishable from zero" in f for f in mt["failures"])
+
+
+def test_goal6_needs_holdout_not_just_walkforward(conn, home):
+    sid = _world(conn, home)
+    ns = S.normalize(SPEC); m, split = R.get_market(conn, ns)
+    for stage, fn in (("walkforward", V.walkforward), ("robustness", V.robustness)):                  # stages 3+4 only, no holdout
+        passed, mt, runs, extra = fn(conn, sid, ns, m, split)
+        with db.tx(conn):
+            V._record(conn, sid, stage, passed, 1, mt, m.version, runs)
+    conn.execute("UPDATE candidates SET stage='robustness' WHERE strategy_id=?", (sid,))
+    g6 = goals.compute(conn, sid)[5]
+    assert g6["symbol"] == "◐" and "holdout" in g6["obstacle"]
+
+
+def test_controlled_config_change_marks_evidence_stale_and_holdout_stays_spent(conn, home, monkeypatch):
+    sid = _world(conn, home)
+    V.run_validation(conn, sid)
+    assert qualify.assess(conn, sid)["gates"]["holdout"] == "passed"
+    monkeypatch.setitem(config.THRESHOLDS, "wf_min_trades", 59)                    # a reviewed protocol change
+    with pytest.raises(PermissionError):
+        guardians.approve_config_baseline(conn, "x", {"failed": 1})                  # no passing tests -> refused
+    diff = guardians.approve_config_baseline(conn, "calibration", {"failed": 0})
+    assert diff == {"thresholds.wf_min_trades": {"old": 60, "new": 59}}
+    a = qualify.assess(conn, sid)
+    assert a["gates"]["walkforward"] == "stale" and a["status"] != "qualified"
+    notes = V.run_validation(conn, sid)                                              # stale stages are re-run under the new protocol...
+    assert notes[0].startswith("walkforward=") and any("holdout denied: candidate already evaluated" in n for n in notes)   # ...but the holdout look is spent
+    assert qualify.assess(conn, sid)["status"] != "qualified"
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE type='change_control'").fetchone()[0] == 1
+
+
+def test_periodic_sweep_requeues_stale_candidates_once_per_config_version(conn, home):
+    from nexus import scheduler
+    sid = _world(conn, home)
+    V.run_validation(conn, sid)
+    scheduler.periodic(conn)
+    scheduler.periodic(conn)                                   # idempotent within a config version
+    keys = [r[0] for r in conn.execute("SELECT dedupe_key FROM jobs WHERE type='validate'")]
+    assert keys.count(f"validate:{sid}:{config.trusted_hash()[:8]}") == 1

@@ -363,7 +363,7 @@ def child_main(role, name):
         last_periodic = 0
         while not stop["v"]:
             try:
-                conn.execute("UPDATE processes SET heartbeat=? WHERE name=?", (time.time(), name))
+                conn.execute("UPDATE processes SET heartbeat=? WHERE name=? AND pid=?", (time.time(), name, pid))
                 if child_should_exit(conn):
                     break
                 if time.time() - last_periodic > 60:
@@ -380,7 +380,7 @@ def child_main(role, name):
         g = guardians.GUARDIANS[int(name[-1])](db.open_db())
         while not stop["v"]:
             try:
-                g.conn.execute("UPDATE processes SET heartbeat=? WHERE name=?", (time.time(), name))
+                g.conn.execute("UPDATE processes SET heartbeat=? WHERE name=? AND pid=?", (time.time(), name, pid))
                 if child_should_exit(g.conn):
                     break
                 g.cycle()
@@ -395,7 +395,7 @@ def child_main(role, name):
         from . import server
         server.serve(stop)
     with db.tx(conn):
-        conn.execute("UPDATE processes SET status='stopped', heartbeat=? WHERE name=?", (time.time(), name))
+        conn.execute("UPDATE processes SET status='stopped', heartbeat=? WHERE name=? AND pid=?", (time.time(), name, pid))
     lg.info("%s exiting", name)
 
 

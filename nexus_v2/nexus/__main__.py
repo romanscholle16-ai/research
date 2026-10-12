@@ -11,6 +11,8 @@ def main(argv=None):
     rs = sp.add_parser("restore"); rs.add_argument("backup")
     rw = sp.add_parser("restart-worker"); rw.add_argument("name")
     ac = sp.add_parser("approve-code-change"); ac.add_argument("reason")
+    cc = sp.add_parser("approve-config-change"); cc.add_argument("reason")
+    ap_all = sp.add_parser("approve-change"); ap_all.add_argument("reason")
     a = ap.parse_args(argv)
 
     from . import config, db, runtime
@@ -81,6 +83,24 @@ def main(argv=None):
         failed = 0 if r.returncode == 0 else 1
         guardians.approve_code_baseline(conn, a.reason, {"failed": failed, "output": r.stdout[-500:]})
         print("baseline updated; tests:", r.stdout.strip().splitlines()[-1]); return 0
+    if a.cmd == "approve-change":            # config + trusted-code baselines after ONE passing full test run
+        from . import guardians
+        if runtime.supervisor_lock_held():
+            print("stop the runtime first (nexus shutdown)"); return 1
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", os.path.join(os.path.dirname(__file__), "..", "tests")], capture_output=True, text=True)
+        summ = {"failed": 0 if r.returncode == 0 else 1, "output": r.stdout[-400:]}
+        if summ["failed"]:
+            print(r.stdout[-1500:]); return 1
+        diff = guardians.approve_config_baseline(conn, a.reason, summ)
+        guardians.approve_code_baseline(conn, a.reason, summ)
+        print("baselines updated. config differences:", json.dumps(diff, indent=1)); print("tests:", r.stdout.strip().splitlines()[-1]); return 0
+    if a.cmd == "approve-config-change":
+        from . import guardians
+        if runtime.supervisor_lock_held():
+            print("stop the runtime first (nexus shutdown): config changes are applied to a stopped system"); return 1
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", os.path.join(os.path.dirname(__file__), "..", "tests")], capture_output=True, text=True)
+        diff = guardians.approve_config_baseline(conn, a.reason, {"failed": 0 if r.returncode == 0 else 1, "output": r.stdout[-400:]})
+        print("config baseline updated; differences:", json.dumps(diff, indent=1)); print("tests:", r.stdout.strip().splitlines()[-1]); return 0
     if a.cmd == "test":
         import re
         r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-rs", os.path.join(os.path.dirname(__file__), "..", "tests")], capture_output=True, text=True)

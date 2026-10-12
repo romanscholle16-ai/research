@@ -26,6 +26,31 @@ def approve_code_baseline(conn, reason, test_summary):
         db.event(conn, "change_control", "guardian3", f"trusted code baseline updated: {reason}", test_summary)
 
 
+def approve_config_baseline(conn, reason, test_summary):
+    """Controlled change of the trusted CONFIG (thresholds/costs/goals). Requires a reason and a passing test run; the old and new
+    hashes and the exact differences are logged. Evidence recorded under the old thresholds automatically becomes stale (re-validated;
+    holdout looks already spent stay spent)."""
+    if not test_summary or test_summary.get("failed", 1) != 0:
+        raise PermissionError("controlled change requires a passing test run")
+    old = conn.execute("SELECT value FROM meta WHERE key='trusted_hash_baseline'").fetchone()[0]
+    old_cfg = json.loads(conn.execute("SELECT value FROM meta WHERE key='trusted_config_json'").fetchone()[0])
+    new_cfg = json.loads(json.dumps(config.trusted_config(), default=str))
+    diff = {}
+    for sec in new_cfg:
+        if isinstance(new_cfg[sec], dict):
+            for k, v in new_cfg[sec].items():
+                if old_cfg.get(sec, {}).get(k) != v:
+                    diff[f"{sec}.{k}"] = {"old": old_cfg.get(sec, {}).get(k), "new": v}
+        elif old_cfg.get(sec) != new_cfg[sec]:
+            diff[sec] = {"old": old_cfg.get(sec), "new": new_cfg[sec]}
+    with db.tx(conn):
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('trusted_hash_baseline',?)", (config.trusted_hash(),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('trusted_config_json',?)", (json.dumps(new_cfg),))
+        db.event(conn, "change_control", "guardian3", f"trusted CONFIG changed: {reason}", {"old_hash": old, "new_hash": config.trusted_hash(), "diff": diff, "tests": test_summary})
+        db.resolve_incident(conn, "config_changed", "approved via controlled change")
+    return diff
+
+
 class Guardian:
     name = "guardian"
     interval = 10.0
@@ -96,6 +121,15 @@ class Reliability(Guardian):
                 db.set_state(c, f"restart:{p['name']}", "1")
             elif ok:
                 self.clear_incident(fp, "heartbeat restored")
+        # duplicate-process check: more live workers than configured means orphans/duplicates
+        live_workers = [p["name"] for p in c.execute("SELECT name,pid FROM processes WHERE role='worker' AND status IN ('running','starting')") if sysinfo.pid_alive(p["pid"])]
+        dup = len(live_workers) > st["workers"]
+        self.note("duplicate_workers", not dup, f"live={live_workers} configured={st['workers']}")
+        if dup and sup_ok:
+            self.raise_incident("worker", "warning", f"{len(live_workers)} live workers but {st['workers']} configured", "duplicate startup or orphan",
+                                "extra workers are retired by the supervisor's reconcile loop", fp="dup_workers", degraded=False)
+        elif not dup:
+            self.clear_incident("dup_workers")
         # stale jobs
         rc = jobs.reclaim_stale(c, 90.0, st["job_timeout_s"])
         for jid, jt, why, res in rc:

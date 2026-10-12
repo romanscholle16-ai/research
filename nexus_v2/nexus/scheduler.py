@@ -37,13 +37,14 @@ def tick(conn, rng=None):
     rng.shuffle(ags)
     total = 0
     for ag in ags:
-        # hourly cap, paced: at most 1/6 of the hourly budget per rolling 10 minutes (no bursts that starve other work)
+        # hourly cap, smoothly paced: ceil(budget/60) per rolling minute (steady flow; no bursts that starve other work)
         left = min(st["agent_budget_per_hour"] - agent_used_last_hour(conn, ag.name),
-                   max(1, st["agent_budget_per_hour"] // 6) - agent_used_last(conn, ag.name, 600))
+                   -(-st["agent_budget_per_hour"] // 60) - agent_used_last(conn, ag.name, 60))
         n = min(BATCH, left, room)
         if n <= 0:
             continue
         props = ag.propose(n, rng, seen)
+        _remember(conn, ag, len(props))
         if not props:
             with db.tx(conn):
                 conn.execute("INSERT INTO scheduler_log(ts,agent,family,mode,why,would_change,strategy_id) VALUES(?,?,?,?,?,?,?)",
@@ -66,15 +67,28 @@ def tick(conn, rng=None):
     return total
 
 
+def _remember(conn, ag, n):
+    """Per-agent persistent history: lifetime proposals, last activity, last recommendations (survives restarts)."""
+    r = conn.execute("SELECT state_json FROM agent_state WHERE agent=?", (ag.name,)).fetchone()
+    st = json.loads(r[0]) if r else {"proposed_total": 0, "empty_ticks": 0}
+    st["proposed_total"] += n
+    st["empty_ticks"] = 0 if n else st["empty_ticks"] + 1
+    st["last_tick"] = time.time()
+    st["scope"] = ag.scope
+    conn.execute("INSERT INTO agent_state(agent,state_json,updated_at) VALUES(?,?,?) ON CONFLICT(agent) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at",
+                 (ag.name, json.dumps(st), time.time()))
+
+
 def periodic(conn):
     """Time-bucketed housekeeping jobs (idempotent via dedupe keys)."""
     now = time.time()
     with db.tx(conn):
         jobs.enqueue(conn, "data_update", {}, priority=2, dedupe=f"data:{int(now // (6 * 3600))}")
         jobs.enqueue(conn, "paper_forward", {}, priority=4, dedupe=f"pf:{int(now // 86400)}")
-        for r in conn.execute("SELECT c.strategy_id FROM candidates c WHERE NOT EXISTS (SELECT 1 FROM validations v WHERE "
-                              "v.strategy_id=c.strategy_id AND v.stage='adversarial') LIMIT 5"):
-            jobs.enqueue(conn, "challenge", {"strategy_id": r[0]}, priority=4, dedupe=f"challenge:{r[0]}")
+        # re-validate candidates whose evidence predates the current trusted config (idempotent: fresh stages are skipped; keyed per config hash)
+        h8 = config.trusted_hash()[:8]
+        for r in conn.execute("SELECT strategy_id FROM candidates WHERE status!='qualified' LIMIT 40"):
+            jobs.enqueue(conn, "validate", {"strategy_id": r[0]}, priority=3, dedupe=f"validate:{r[0]}:{h8}")
         # adversarial agent recommendations -> bounded, reversible budget redirection (never zero)
         adv = A.Adversarial(conn)
         for rec in adv.recommend():

@@ -6,7 +6,7 @@ initialisation and raises a critical incident on any difference. Mutable operati
 """
 import hashlib, json, os, pathlib
 
-CONFIG_VERSION = "2.0.0"
+CONFIG_VERSION = "2.0.1"
 
 
 def home() -> pathlib.Path:
@@ -74,7 +74,8 @@ THRESHOLDS = {
     "wf_min_trades": 60,
     "wf_min_positive_fold_frac": 0.6,
     "wf_ci_level": 0.90,           # two-sided 90% block-bootstrap CI (= one-sided 95% lower bound) of mean R must exceed 0
-    "wf_min_multiple_testing_t": 1.2,   # floor; actual bar = max(floor, sqrt(2 ln M)) with M = candidates tested in WF
+    "wf_min_multiple_testing_t": 1.2,   # floor for the walk-forward t-statistic bar
+    "wf_expected_candidates": 50,       # pre-registered M floor: bar = max(floor, sqrt(2 ln max(M_seen, 50))) = 2.80, so early candidates get no lenient bar
     # stage 4 robustness
     "rb_min_total_trades": 120,
     "rb_min_neighbor_positive_frac": 0.6,
@@ -90,6 +91,9 @@ THRESHOLDS = {
     # stage 5 protected holdout
     "ho_min_trades": 30,
     "ho_min_pf": 1.0,
+    "ho_min_t": 1.0,                  # holdout expectancy must be distinguishable from zero (one-sided p~0.16), not merely positive
+    "adv_min_p": 0.05,                # out-of-sample randomisation test: random entries with the same exits must do worse (p<=0.05)
+    "adv_null_runs": 200,
     "ho_max_evaluations_total": 12,   # holdout budget: each look at the holdout is a selection event
     # stage 6 paper-forward
     "pf_min_days": 30,
