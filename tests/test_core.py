@@ -276,3 +276,17 @@ def test_daily_file_numeric_header_row_is_dropped(tmp_path):
     with gzip.open(f, "wt") as fh: fh.write("0,1,2,3,4,5,6,7,8,9,10\n1790000000000,100,101,99,100.5,10,1790000059999,1000,5,4,400\n")
     out = D._read_one(f, "klines")
     assert len(out) == 1 and out.iloc[0, 0] == 1790000000000
+
+
+def test_stale_pid_lock_with_old_heartbeat_does_not_block_service(home):
+    from strategylab.service import Service
+    from strategylab.db import DB
+    import os, time
+    db = DB(); svc = Service()
+    svc.lock.write_text(str(os.getppid()))                 # a pid that is alive (the test runner's parent) but not our service
+    db.set("service_heartbeat", time.time() - 3600)         # ... with a long-dead heartbeat => stale lock, take over
+    svc.acquire(); assert svc.lock.read_text() == str(os.getpid())
+    svc.lock.write_text(str(os.getppid())); db.set("service_heartbeat", time.time())     # fresh heartbeat + live pid => genuinely running
+    try: svc.acquire(); raised = False
+    except SystemExit: raised = True
+    assert raised

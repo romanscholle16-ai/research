@@ -22,7 +22,9 @@ class Service:
         if self.lock.exists():
             try:
                 pid = int(self.lock.read_text())
-                if pid != os.getpid() and resources.pid_alive(pid): print("service already running", pid); sys.exit(0)
+                # a live pid number alone is not proof: after a container restart the old pid can be reused or invisible. Require a fresh heartbeat too.
+                fresh = time.time() - float(self.db.get("service_heartbeat", 0) or 0) < 90
+                if pid != os.getpid() and resources.pid_alive(pid) and fresh: print("service already running", pid); sys.exit(0)
             except ValueError: pass
         self.lock.write_text(str(os.getpid()))
 
