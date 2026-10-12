@@ -283,7 +283,7 @@ def test_stale_pid_lock_with_old_heartbeat_does_not_block_service(home):
     from strategylab.db import DB
     import os, time
     db = DB(); svc = Service()
-    svc.lock.write_text(str(os.getppid()))                 # a pid that is alive (the test runner's parent) but not our service
+    svc.lock.write_text(str(os.getppid())); os.utime(svc.lock, (time.time() - 3600, time.time() - 3600))      # a pid that is alive (the test runner's parent) but not our service, lock long old
     db.set("service_heartbeat", time.time() - 3600)         # ... with a long-dead heartbeat => stale lock, take over
     svc.acquire(); assert svc.lock.read_text() == str(os.getpid())
     svc.lock.write_text(str(os.getppid())); db.set("service_heartbeat", time.time())     # fresh heartbeat + live pid => genuinely running
