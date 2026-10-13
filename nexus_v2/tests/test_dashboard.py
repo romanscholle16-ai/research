@@ -4,7 +4,16 @@ import pytest
 from nexus import config, db, server, runtime, goals, memory, research as R, strategies as S, validation as V, exchange
 import conftest
 
-CHROME = next(iter(pathlib.Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome")), None)
+def _find_browser():
+    cands = list(pathlib.Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome"))
+    for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):                      # Windows: Chrome or Edge (both Chromium)
+        base = os.environ.get(env)
+        if base:
+            cands += [pathlib.Path(base) / "Google/Chrome/Application/chrome.exe", pathlib.Path(base) / "Microsoft/Edge/Application/msedge.exe"]
+    return next((c for c in cands if c.exists()), None)
+
+
+CHROME = _find_browser()
 
 
 @pytest.fixture()

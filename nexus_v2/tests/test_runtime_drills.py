@@ -8,6 +8,14 @@ import conftest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def hard_kill(pid):
+    """Equivalent of kill -9 on POSIX and `taskkill /F` on Windows."""
+    if sys.platform.startswith("win"):
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+    else:
+        os.kill(pid, signal.SIGKILL)
+
+
 class RT:
     def __init__(self, home):
         self.home = str(home)
@@ -53,9 +61,6 @@ def rt(tmp_path):
     c.close()
     yield r
     r.cli("shutdown", timeout=200)
-    for _ in range(20):
-        out = subprocess.run(["pgrep", "-f", f"NEXUS_HOME"], capture_output=True, text=True).stdout
-        break
 
 
 def _children(rt):
@@ -89,7 +94,8 @@ def test_end_to_end_campaign_and_independence_from_caller(rt):
     rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] > n1, 90)      # still progressing with no caller attached (pacing: <=10/agent/min)
     # durable counts == raw rows (no double counting)
     assert c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == c.execute("SELECT COUNT(DISTINCT strategy_id) FROM experiments").fetchone()[0]
-    ov = json.loads(subprocess.run(["curl", "-s", f"http://127.0.0.1:{rt.env['NEXUS_PORT']}/api/overview"], capture_output=True, text=True).stdout)
+    import urllib.request
+    ov = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{rt.env['NEXUS_PORT']}/api/overview", timeout=20).read())
     assert ov["health"]["supervisor_alive"] and len(ov["goals"]) == 15 and ov["live_trading"] is False
 
 
@@ -99,7 +105,7 @@ def test_worker_killed_mid_task_is_restarted_without_double_counting(rt):
     rt.wait(lambda: c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] >= 20, 90)
     ch = _children(rt)
     victim = ch["worker-1"]
-    os.kill(victim["pid"], signal.SIGKILL)
+    hard_kill(victim["pid"])
     new = rt.wait(lambda: (_children(rt).get("worker-1") or {"pid": victim["pid"]})["pid"] != victim["pid"] and _children(rt).get("worker-1"), 60)
     assert new["pid"] != victim["pid"]
     assert c.execute("SELECT COUNT(*) FROM incidents WHERE fingerprint='exit:worker-1'").fetchone()[0] >= 1       # cause recorded
@@ -116,7 +122,6 @@ def test_duplicate_supervisor_prevented(rt):
     assert "already running" in out
     r = subprocess.run([sys.executable, "-m", "nexus", "supervisor"], cwd=ROOT, env=rt.env, capture_output=True, text=True, timeout=30)
     assert r.returncode == 3 and "already running" in r.stderr
-    sups = [p for p in subprocess.run(["pgrep", "-af", "nexus supervisor"], capture_output=True, text=True).stdout.splitlines() if rt.home in open(f"/proc/{p.split()[0]}/environ").read().replace("\0", " ")] if False else None
     c = rt.conn()
     workers = [n for n in _children(rt) if n.startswith("worker")]
     assert sorted(workers) == ["worker-1", "worker-2"]                                            # no duplicate workers
@@ -129,7 +134,7 @@ def test_supervisor_killed_reports_dead_then_recovers_cleanly(rt):
     old_children = _children(rt)
     sup = int(db.get_state(c, "supervisor_pid"))
     done_before = c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
-    os.kill(sup, signal.SIGKILL)
+    hard_kill(sup)
     time.sleep(1.5)
     h = json.loads(rt.cli("status").split("\n}")[0] + "\n}")
     assert h["status"] == "dead" and h["supervisor_alive"] is False                              # never shown as healthy
@@ -269,3 +274,26 @@ def test_no_live_order_or_withdrawal_code_paths():
         assert forbidden not in src
     import nexus
     assert nexus.LIVE_TRADING_ENABLED is False and config.RISK["live_trading"] is False
+
+
+def test_launch_command_verifies_real_health_and_survives_launcher_exit(rt):
+    """`nexus launch` (what START_NEXUS.bat calls) must return 0 only after ownership, heartbeats, DB round-trip, persisted progress,
+    dashboard and incident checks pass; a second launch must refuse to start a duplicate; `check` must agree; stop must be clean."""
+    def run(*a, timeout=400):
+        r = subprocess.run([sys.executable, "-m", "nexus", *a], cwd=ROOT, env=rt.env, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout + r.stderr
+    rc, out = run("launch", "--no-browser", "--profile", "unattended_7_day")
+    assert rc == 0 and "ALL CHECKS PASSED" in out, out[-2500:]
+    assert "[PASS] research progress" in out and "[PASS] process guardian3" in out and "[PASS] dashboard responds" in out
+    c = rt.conn()
+    assert db.get_state(c, "profile") == "unattended_7_day" and db.settings(c)["mem_pause_pct"] == 80
+    sup = int(db.get_state(c, "supervisor_pid"))
+    rc2, out2 = run("launch", "--no-browser")
+    assert rc2 == 0 and "not starting a second one" in out2 and int(db.get_state(rt.conn(), "supervisor_pid")) == sup
+    rc3, out3 = run("check")
+    assert rc3 == 0, out3[-1500:]
+    assert sysinfo.pid_alive(sup)                                   # launcher processes have exited; the runtime has not
+    rc4, out4 = run("shutdown")
+    assert rc4 == 0 and "exited cleanly" in out4
+    rc5, out5 = run("check")
+    assert rc5 == 1 and "FAIL" in out5                              # a stopped runtime is reported as failing, never healthy

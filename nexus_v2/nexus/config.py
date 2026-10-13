@@ -142,6 +142,16 @@ SAFE_SETTINGS = {
     "mem_pause_pct": (70, 95, 88),
     "disk_min_free_gb": (1, 100, 3),
     "job_timeout_s": (60, 7200, 900),
+    "cpu_throttle_pct": (50, 100, 90),            # sustained (3 consecutive guardian cycles) system CPU above this pauses research work
+}
+
+# Named operating profiles (applied with `nexus start --profile NAME`; every value is range-checked by validate_settings)
+PROFILES = {
+    "default": {},
+    # 16 GB RAM / GTX 1070 desktop that must stay usable and run for days: 2 light workers (~120 MB each), modest pacing,
+    # earlier memory throttle (leaves >=4 GB for Windows + browser), larger disk reserve. GPU is detected but not used.
+    "unattended_7_day": {"workers": 2, "agent_budget_per_hour": 150, "queue_high_water": 100, "mem_pause_pct": 80,
+                         "disk_min_free_gb": 5, "job_timeout_s": 900, "cpu_throttle_pct": 85},
 }
 
 

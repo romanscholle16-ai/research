@@ -1,15 +1,11 @@
 # Seven-day soak log
 
-**Status: NO COMPLETED SOAK RUN. Seven-day reliability is unproven.**
+**Status: NO SOAK HAS STARTED. Seven-day reliability is unproven.**
 
-The production runtime was launched on the build machine (Linux container) and observed for minutes–hours only; that container is ephemeral
-and is not the target Windows PC. Record a real run here following `docs/OPERATIONS.md` ("Seven-day soak procedure"):
+| Date (UTC) | Host | Event / evidence |
+|---|---|---|
+| 2026-10-12 | Linux cloud VM (ephemeral, not the target) | Runtime ran for roughly 1 hour in short segments with drills; ended with the session. Not a soak. |
+| 2026-10-13 | Linux cloud VM | Assignment to deploy on the user's Windows PC could not be executed: shell is not Windows. No runtime launched. |
 
-| Field | Value |
-|---|---|
-| Start (UTC) / host / OS | |
-| End (UTC) | |
-| Supervisor restarts / worker restarts | |
-| Incidents (open / recurring) | |
-| `integrity`, `status`, counters at end | |
-| Verdict | |
+When `START_NEXUS.bat` is run on the Windows PC, record here: start time (UTC), `CHECK_NEXUS.bat` output, then daily `CHECK_NEXUS.bat`,
+`python -m nexus status`, restarts per process, incidents (open/recurring), disk/RAM trend; finish with `python -m nexus integrity` and the counters.

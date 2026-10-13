@@ -1,0 +1,212 @@
+{
+ "version": "2.0.0",
+ "config_version": "2.0.1",
+ "trusted_config_hash": "da6ce784dc9f8cc26f17f824d07903b42afd8686b2e26c9f1bcecf68dfe82e4e",
+ "git_commit": "38c603b",
+ "written_at": 1791857849.2738285,
+ "runtime": {
+  "status": "dead",
+  "reasons": [
+   "supervisor is not running"
+  ],
+  "desired": "running",
+  "supervisor_alive": false,
+  "workers_alive": 0,
+  "queue": {
+   "pending": 0,
+   "running": 0,
+   "done": 1100,
+   "quarantined": 0
+  }
+ },
+ "counters": {
+  "closed_trades": 224577,
+  "backtests": 1556,
+  "unique_strategies": 1068,
+  "experiments_completed": 1069,
+  "hypotheses": 173,
+  "hypotheses_rejected": 0,
+  "promising": 11,
+  "invalid": 0,
+  "data_failures": 0,
+  "inconclusive": 229,
+  "rejected": 829,
+  "candidates": 11,
+  "qualified": 0,
+  "validation_runs": 26,
+  "validation_passes": 9,
+  "queue_pending": 0,
+  "queue_running": 0,
+  "quarantined": 0,
+  "duplicate_rejections": 66,
+  "holdout_looks": 1,
+  "incidents_open": 0,
+  "incidents_total": 2
+ },
+ "last_checkpoint": {
+  "ts": 1791785467.1835856,
+  "path": "/home/user/research/nexus_v2/var/backups/nexus-1791785467177-periodic.db",
+  "integrity_ok": 1
+ },
+ "recent_test_evidence": [
+  {
+   "ts": 1791857848.6550412,
+   "suite": "full-linux-with-windows-readiness",
+   "passed": 112,
+   "failed": 0,
+   "skipped": 3
+  },
+  {
+   "ts": 1791787551.2986088,
+   "suite": "full",
+   "passed": 92,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "ts": 1791785457.6813395,
+   "suite": "full",
+   "passed": 86,
+   "failed": 0,
+   "skipped": 0
+  }
+ ],
+ "live_trading_enabled": false,
+ "environment": {
+  "platform": "linux",
+  "os": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+  "python": "3.13.16",
+  "install_path": "/home/user/research/nexus_v2",
+  "is_windows": false,
+  "remote_session": true
+ },
+ "profile": null,
+ "resume_instructions": [
+  "git status; read docs/WINDOWS_DEPLOYMENT_REPORT.md and docs/UNATTENDED_READINESS.md",
+  "On the Windows PC: START_NEXUS.bat, then CHECK_NEXUS.bat, then INSTALL_AUTOSTART.bat",
+  "python -m nexus test  (Windows-only tests run there and must be reported separately)",
+  "record the soak in docs/SOAK_LOG.md only from real evidence"
+ ],
+ "readiness": [
+  {
+   "requirement": "Execution environment is the user's local Windows PC",
+   "status": "FAIL",
+   "evidence": "Linux cloud VM (uname Linux 6.18 x86_64, not WSL, CLAUDE_CODE_REMOTE=true, no cmd.exe/schtasks.exe). Nothing was installed on the user's PC."
+  },
+  {
+   "requirement": "Existing implementation found and preserved",
+   "status": "PASS",
+   "evidence": "branch claude/confident-gauss-l66zf7 commit 38c603b present; var/ DB, datasets and history intact on this VM; 92 prior tests still pass inside the 112"
+  },
+  {
+   "requirement": "Windows-compat code (CPU/RSS via ctypes, priority, per-process logs, UTF-8, atomic replace)",
+   "status": "PASS",
+   "evidence": "implemented + 16 OS-independent tests; NOT executed on Windows"
+  },
+  {
+   "requirement": "START/STOP/RESTART/CHECK/INSTALL_AUTOSTART/UNINSTALL_AUTOSTART .bat created",
+   "status": "PASS",
+   "evidence": "static checks only: CRLF, ASCII, required steps present, no system-wide changes"
+  },
+  {
+   "requirement": "Batch files executed on Windows",
+   "status": "NOT TESTED",
+   "evidence": "no Windows host available"
+  },
+  {
+   "requirement": "Python launcher logic (preflight, duplicate refusal, real health verification)",
+   "status": "PASS",
+   "evidence": "tests/test_runtime_drills.py::test_launch_command_* on Linux with real processes"
+  },
+  {
+   "requirement": "venv creation/repair and dependency install on Windows",
+   "status": "NOT TESTED",
+   "evidence": "logic in START_NEXUS.bat only"
+  },
+  {
+   "requirement": "Windows process creation/termination, msvcrt supervisor lock",
+   "status": "NOT TESTED",
+   "evidence": "3 Windows-only tests skipped"
+  },
+  {
+   "requirement": "Auto-start Scheduled Task configured and verified",
+   "status": "BLOCKED",
+   "evidence": "needs a Windows host; XML task generation and its fields are unit-tested (no time limit, battery-safe, per-user, no elevation)"
+  },
+  {
+   "requirement": "unattended_7_day profile defined and bounds-checked",
+   "status": "PASS",
+   "evidence": "config.PROFILES; applied by `nexus launch`"
+  },
+  {
+   "requirement": "Profile tuned on the GTX 1070 / 16 GB machine",
+   "status": "NOT TESTED",
+   "evidence": "only Linux 4-core/16 GB measurements exist (3-5% CPU, ~110 MB per worker at 150 exp/agent/h)"
+  },
+  {
+   "requirement": "GPU detection on GTX 1070",
+   "status": "NOT TESTED",
+   "evidence": "nvidia-smi parsing implemented; no GPU on this VM; GPU not used for research"
+  },
+  {
+   "requirement": "Production research launch on Windows",
+   "status": "BLOCKED",
+   "evidence": "requires running START_NEXUS.bat on the PC"
+  },
+  {
+   "requirement": "Runtime survives launcher/terminal exit",
+   "status": "PASS (Linux only)",
+   "evidence": "supervisor PPID 1 own session; drills; NOT TESTED on Windows (DETACHED_PROCESS path)"
+  },
+  {
+   "requirement": "Fault-injection drills (worker/supervisor kill, dup start, poison job, mem/disk, DB corruption, AI outage, stalled job)",
+   "status": "PASS (Linux only)",
+   "evidence": "13 drills + launcher drill; Windows variants use taskkill but were not run"
+  },
+  {
+   "requirement": "Trusted backtester hand-calculated references",
+   "status": "PASS",
+   "evidence": "18 engine tests"
+  },
+  {
+   "requirement": "Validation safeguards (multiple-testing floor, holdout significance, OOS randomisation, version-keyed revalidation)",
+   "status": "PASS",
+   "evidence": "verified in code and 21 validation tests"
+  },
+  {
+   "requirement": "Ten agents / three guardians distinct and independent",
+   "status": "PASS",
+   "evidence": "tests + live run earlier"
+  },
+  {
+   "requirement": "All 15 goals on dashboard with required fields",
+   "status": "PASS",
+   "evidence": "API + headless Chromium DOM test"
+  },
+  {
+   "requirement": "Counters reconcile with database",
+   "status": "PASS",
+   "evidence": "tests + guardian 3 check"
+  },
+  {
+   "requirement": "Live trading disabled",
+   "status": "PASS",
+   "evidence": "no order/withdraw code paths (source scan test), health reports false"
+  },
+  {
+   "requirement": "BTCC specification / 250x / 500x verified",
+   "status": "BLOCKED",
+   "evidence": "no authoritative BTCC source retrievable; goals 2-4 remain '?'"
+  },
+  {
+   "requirement": "Seven-day soak",
+   "status": "NOT TESTED",
+   "evidence": "no soak has run; docs/SOAK_LOG.md has no completed run"
+  },
+  {
+   "requirement": "Any strategy qualified",
+   "status": "FAIL (by evidence)",
+   "evidence": "0 qualified; none expected to be; this is not a defect"
+  }
+ ]
+}

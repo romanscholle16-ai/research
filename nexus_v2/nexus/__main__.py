@@ -2,11 +2,17 @@ import argparse, json, os, subprocess, sys, time
 
 
 def main(argv=None):
+    for st in (sys.stdout, sys.stderr):
+        try:
+            st.reconfigure(encoding="utf-8", errors="replace")      # Windows consoles default to a legacy code page
+        except Exception:
+            pass
     ap = argparse.ArgumentParser(prog="nexus", description="NEXUS V2 research runtime (research only; live trading is impossible)")
     sp = ap.add_subparsers(dest="cmd", required=True)
     for c in ("start", "pause", "resume", "stop", "shutdown", "status", "init", "sync-data", "backup", "integrity", "test", "install-startup",
-              "uninstall-startup", "supervisor", "state-report", "rebaseline"):
+              "uninstall-startup", "supervisor", "state-report", "rebaseline", "check"):
         sp.add_parser(c)
+    ln = sp.add_parser("launch"); ln.add_argument("--profile", default="unattended_7_day"); ln.add_argument("--no-browser", action="store_true"); ln.add_argument("--autostart", action="store_true")
     ch = sp.add_parser("child"); ch.add_argument("role"); ch.add_argument("name")
     rs = sp.add_parser("restore"); rs.add_argument("backup")
     rw = sp.add_parser("restart-worker"); rw.add_argument("name")
@@ -20,6 +26,12 @@ def main(argv=None):
         return runtime.Supervisor().run()
     if a.cmd == "child":
         return runtime.child_main(a.role, a.name)
+    if a.cmd == "launch":
+        from . import launcher
+        return launcher.launch(a.profile, open_browser=not (a.no_browser or a.autostart))
+    if a.cmd == "check":
+        from . import launcher
+        return launcher.check()
     conn = db.open_db()
     if a.cmd == "init":
         from . import exchange

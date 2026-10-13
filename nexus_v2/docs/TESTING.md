@@ -15,7 +15,7 @@ Run once more by the user with `python -m nexus test`; on Windows the POSIX-only
 | G recovery drills | `tests/test_runtime_drills.py` (13) | real processes: worker `kill -9` mid-task; supervisor `kill -9` ⇒ status **dead** ⇒ clean restart + orphan supersession; duplicate-supervisor refusal; graceful stop/resume; poison job quarantine; stalled job; memory & disk breach; DB corruption + restore; AI provider down ⇒ fallback + backoff; no paid-AI/live-order code paths |
 | H e2e campaign | `test_end_to_end_campaign_and_independence_from_caller` | start→experiments persist→validation→API; launcher exits, runtime keeps progressing |
 | I scale-up | `scripts/scale_probe.py`, `var/scale_probe.json` | budget 150→300→600 /agent/h = 30→50→100 experiments/min at 3.5%→2.7%→5.3% CPU, ≤6% RAM, 0 incidents; workers stay at 2 (queue always empty ⇒ more workers add nothing); default kept at 150 |
-| J readiness | see PROJECT_STATE.json, `nexus status` | independent startup, persistent state, checkpoint, safe stop/restart, health reporting, no live-order code, no paid API |
+| J readiness | see project_state.json, `nexus status` | independent startup, persistent state, checkpoint, safe stop/restart, health reporting, no live-order code, no paid API |
 
 ## Defects found by this process (all fixed, regression-tested)
 See `docs/CHANGELOG.md`. The most important: a chance candidate passed walk-forward **and** the holdout in the first live run because the

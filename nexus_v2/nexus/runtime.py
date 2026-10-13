@@ -27,6 +27,7 @@ def child_should_exit(conn) -> bool:
 def _env():
     e = dict(os.environ)
     e["NEXUS_EPOCH"] = EPOCH["v"]
+    e["PYTHONUTF8"] = "1"; e["PYTHONIOENCODING"] = "utf-8"
     e["PYTHONPATH"] = str(ROOT) + os.pathsep + e.get("PYTHONPATH", "")
     e["NEXUS_HOME"] = str(config.home())          # children always use the same data directory as the supervisor
     return e
@@ -131,9 +132,11 @@ class Supervisor:
 
     # -- children -------------------------------------------------------------------------------
     def _spawn(self, ch: Child):
-        kw = dict(stdout=open(config.path("logs", f"{ch.name}.out"), "ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(ROOT), env=_env())
+        env = _env(); env["NEXUS_PROC"] = ch.name
+        kw = dict(stdout=open(config.path("logs", f"{ch.name}.out"), "ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=str(ROOT), env=env)
         if IS_WIN:
-            kw["creationflags"] = 0x00000200
+            # new process group (for CTRL_BREAK) + BELOW_NORMAL priority for research processes: Windows, the DB and the dashboard stay responsive
+            kw["creationflags"] = 0x00000200 | (0x00004000 if ch.role in ("worker", "scheduler") else 0)
         ch.proc = subprocess.Popen([sys.executable, "-m", "nexus", "child", ch.role, ch.name], **kw)
         with db.tx(self.conn):
             self.conn.execute("INSERT INTO processes(name,role,pid,started_at,heartbeat,status,restarts) VALUES(?,?,?,?,?,'starting',?) "

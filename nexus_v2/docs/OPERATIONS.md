@@ -13,7 +13,7 @@
 | Restore | `python -m nexus shutdown && python -m nexus restore var/backups/<file>.db` (current DB kept as `.pre-restore-*`) |
 | Controlled change to trusted code | edit → `python -m nexus approve-code-change "<reason>"` (runs the full tests; baseline updated only if they pass) |
 | Pre-launch baseline reset (only while no research exists) | `python -m nexus rebaseline` |
-| Project-state file | `python -m nexus state-report` → `PROJECT_STATE.json` |
+| Project-state file | `python -m nexus state-report` → `project_state.json` |
 
 ## Where things are
 `var/` (override with `NEXUS_HOME`): `nexus.db` (+WAL), `data/` (raw zips, `*_1h.npz`), `logs/` (rotating 5 MB×5 per component, `*.out` for

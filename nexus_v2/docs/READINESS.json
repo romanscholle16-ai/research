@@ -1,0 +1,122 @@
+[
+ {
+  "requirement": "Execution environment is the user's local Windows PC",
+  "status": "FAIL",
+  "evidence": "Linux cloud VM (uname Linux 6.18 x86_64, not WSL, CLAUDE_CODE_REMOTE=true, no cmd.exe/schtasks.exe). Nothing was installed on the user's PC."
+ },
+ {
+  "requirement": "Existing implementation found and preserved",
+  "status": "PASS",
+  "evidence": "branch claude/confident-gauss-l66zf7 commit 38c603b present; var/ DB, datasets and history intact on this VM; 92 prior tests still pass inside the 112"
+ },
+ {
+  "requirement": "Windows-compat code (CPU/RSS via ctypes, priority, per-process logs, UTF-8, atomic replace)",
+  "status": "PASS",
+  "evidence": "implemented + 16 OS-independent tests; NOT executed on Windows"
+ },
+ {
+  "requirement": "START/STOP/RESTART/CHECK/INSTALL_AUTOSTART/UNINSTALL_AUTOSTART .bat created",
+  "status": "PASS",
+  "evidence": "static checks only: CRLF, ASCII, required steps present, no system-wide changes"
+ },
+ {
+  "requirement": "Batch files executed on Windows",
+  "status": "NOT TESTED",
+  "evidence": "no Windows host available"
+ },
+ {
+  "requirement": "Python launcher logic (preflight, duplicate refusal, real health verification)",
+  "status": "PASS",
+  "evidence": "tests/test_runtime_drills.py::test_launch_command_* on Linux with real processes"
+ },
+ {
+  "requirement": "venv creation/repair and dependency install on Windows",
+  "status": "NOT TESTED",
+  "evidence": "logic in START_NEXUS.bat only"
+ },
+ {
+  "requirement": "Windows process creation/termination, msvcrt supervisor lock",
+  "status": "NOT TESTED",
+  "evidence": "3 Windows-only tests skipped"
+ },
+ {
+  "requirement": "Auto-start Scheduled Task configured and verified",
+  "status": "BLOCKED",
+  "evidence": "needs a Windows host; XML task generation and its fields are unit-tested (no time limit, battery-safe, per-user, no elevation)"
+ },
+ {
+  "requirement": "unattended_7_day profile defined and bounds-checked",
+  "status": "PASS",
+  "evidence": "config.PROFILES; applied by `nexus launch`"
+ },
+ {
+  "requirement": "Profile tuned on the GTX 1070 / 16 GB machine",
+  "status": "NOT TESTED",
+  "evidence": "only Linux 4-core/16 GB measurements exist (3-5% CPU, ~110 MB per worker at 150 exp/agent/h)"
+ },
+ {
+  "requirement": "GPU detection on GTX 1070",
+  "status": "NOT TESTED",
+  "evidence": "nvidia-smi parsing implemented; no GPU on this VM; GPU not used for research"
+ },
+ {
+  "requirement": "Production research launch on Windows",
+  "status": "BLOCKED",
+  "evidence": "requires running START_NEXUS.bat on the PC"
+ },
+ {
+  "requirement": "Runtime survives launcher/terminal exit",
+  "status": "PASS (Linux only)",
+  "evidence": "supervisor PPID 1 own session; drills; NOT TESTED on Windows (DETACHED_PROCESS path)"
+ },
+ {
+  "requirement": "Fault-injection drills (worker/supervisor kill, dup start, poison job, mem/disk, DB corruption, AI outage, stalled job)",
+  "status": "PASS (Linux only)",
+  "evidence": "13 drills + launcher drill; Windows variants use taskkill but were not run"
+ },
+ {
+  "requirement": "Trusted backtester hand-calculated references",
+  "status": "PASS",
+  "evidence": "18 engine tests"
+ },
+ {
+  "requirement": "Validation safeguards (multiple-testing floor, holdout significance, OOS randomisation, version-keyed revalidation)",
+  "status": "PASS",
+  "evidence": "verified in code and 21 validation tests"
+ },
+ {
+  "requirement": "Ten agents / three guardians distinct and independent",
+  "status": "PASS",
+  "evidence": "tests + live run earlier"
+ },
+ {
+  "requirement": "All 15 goals on dashboard with required fields",
+  "status": "PASS",
+  "evidence": "API + headless Chromium DOM test"
+ },
+ {
+  "requirement": "Counters reconcile with database",
+  "status": "PASS",
+  "evidence": "tests + guardian 3 check"
+ },
+ {
+  "requirement": "Live trading disabled",
+  "status": "PASS",
+  "evidence": "no order/withdraw code paths (source scan test), health reports false"
+ },
+ {
+  "requirement": "BTCC specification / 250x / 500x verified",
+  "status": "BLOCKED",
+  "evidence": "no authoritative BTCC source retrievable; goals 2-4 remain '?'"
+ },
+ {
+  "requirement": "Seven-day soak",
+  "status": "NOT TESTED",
+  "evidence": "no soak has run; docs/SOAK_LOG.md has no completed run"
+ },
+ {
+  "requirement": "Any strategy qualified",
+  "status": "FAIL (by evidence)",
+  "evidence": "0 qualified; none expected to be; this is not a defect"
+ }
+]

@@ -26,8 +26,28 @@ def mem() -> dict:
         return {"total_mb": 0, "avail_mb": 0, "used_pct": 0.0}
 
 
+_cpu_prev = {"idle": None, "tot": None}
+
+
+def _win_cpu() -> float:
+    """System CPU utilisation since the previous call (GetSystemTimes)."""
+    import ctypes
+    from ctypes import wintypes
+    i, k, u = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+    ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(i), ctypes.byref(k), ctypes.byref(u))
+    f = lambda t: (t.dwHighDateTime << 32) | t.dwLowDateTime
+    idle, tot = f(i), f(k) + f(u)               # kernel time includes idle time
+    pi, pt = _cpu_prev["idle"], _cpu_prev["tot"]
+    _cpu_prev.update(idle=idle, tot=tot)
+    if pi is None or tot == pt:
+        return 0.0
+    return round(100.0 * (1 - (idle - pi) / (tot - pt)), 1)
+
+
 def cpu_load() -> float:
     try:
+        if sys.platform.startswith("win"):
+            return _win_cpu()
         return round(os.getloadavg()[0] / (os.cpu_count() or 1) * 100, 1)
     except (AttributeError, OSError):
         return 0.0
@@ -84,6 +104,26 @@ def pid_alive(pid) -> bool:
 
 
 def proc_rss_mb(pid) -> float:
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD), ("PeakWorkingSetSize", ctypes.c_size_t),
+                            ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t),
+                            ("PeakPagefileUsage", ctypes.c_size_t)]
+            h = ctypes.windll.kernel32.OpenProcess(0x1010, False, int(pid))     # QUERY_INFORMATION | VM_READ
+            if not h:
+                return 0.0
+            c = PMC(); c.cb = ctypes.sizeof(PMC)
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(h, ctypes.byref(c), c.cb)
+            ctypes.windll.kernel32.CloseHandle(h)
+            return c.WorkingSetSize / 2**20 if ok else 0.0
+        except Exception:
+            return 0.0
     try:
         with open(f"/proc/{int(pid)}/statm") as f:
             return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20

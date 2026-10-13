@@ -167,11 +167,15 @@ class Reliability(Guardian):
         logs = sum(f.stat().st_size for f in config.path("logs", "x.log").parent.glob("*") if f.is_file()) / 2**20
         self.note("log_size", logs < 500, f"{logs:.0f}MB")
         mem = sysinfo.mem()
-        hot = mem["used_pct"] > st["mem_pause_pct"]
+        cpu = sysinfo.cpu_load()
+        self.cpu_hist = (getattr(self, "cpu_hist", []) + [cpu])[-3:]
+        cpu_hot = len(self.cpu_hist) == 3 and min(self.cpu_hist) > st["cpu_throttle_pct"]       # sustained, not a spike
+        self.note("cpu", not cpu_hot, f"{cpu}% (recent {self.cpu_hist})")
+        hot = mem["used_pct"] > st["mem_pause_pct"] or cpu_hot
         thr = db.get_state(c, "throttle", "none")
         if hot and thr != "high":
             db.set_state(c, "throttle", "high")
-            self.raise_incident("resources", "warning", f"memory {mem['used_pct']}% > {st['mem_pause_pct']}%", "memory pressure",
+            self.raise_incident("resources", "warning", f"memory {mem['used_pct']}% (limit {st['mem_pause_pct']}%) or sustained CPU {cpu}% (limit {st['cpu_throttle_pct']}%)", "resource pressure",
                                 "throttled: workers idle until pressure falls", fp="mem_high")
         elif not hot and thr == "high":
             db.set_state(c, "throttle", "none")
